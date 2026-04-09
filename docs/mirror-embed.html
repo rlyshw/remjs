@@ -1,0 +1,892 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>remjs mirror embed</title>
+    <style>
+      :root {
+        --bg: #0d1117;
+        --surface: #161b22;
+        --border: #30363d;
+        --text: #e6edf3;
+        --text-muted: #8b949e;
+        --accent: #58a6ff;
+        --purple: #bc8cff;
+        --green: #3fb950;
+        --font-mono: 'SF Mono', 'Cascadia Code', 'JetBrains Mono', Consolas, monospace;
+        --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body { height: 100%; }
+      body {
+        font-family: var(--font-sans);
+        color: var(--text);
+        background: var(--bg);
+        padding: 1rem 1.25rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.85rem;
+      }
+      .label-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
+      }
+      .label {
+        font-family: var(--font-mono);
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--text-muted);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .label .side-source { color: var(--accent); }
+      .label .side-mirror { color: var(--purple); }
+      .pulse {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--green);
+        transition: box-shadow 0.08s, transform 0.08s;
+        opacity: 0.25;
+      }
+      .pulse.active {
+        opacity: 1;
+        box-shadow: 0 0 0 5px rgba(63, 185, 80, 0.35);
+        transform: scale(1.2);
+      }
+      .panes {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
+        flex: 1;
+        min-height: 0;
+      }
+      canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+        background: #06080d;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        cursor: crosshair;
+      }
+      .footnote {
+        font-family: var(--font-mono);
+        font-size: 0.72rem;
+        color: var(--text-muted);
+        text-align: center;
+      }
+      .footnote .sep { margin: 0 0.4rem; color: var(--border); }
+      .footnote .ok { color: var(--green); }
+      .footnote .bad { color: #f85149; }
+    </style>
+  </head>
+  <body>
+    <div class="label-row">
+      <div class="label">
+        <span class="side-source">source — your court</span>
+        <span class="pulse" id="pulseSource"></span>
+      </div>
+      <div class="label">
+        <span class="side-mirror">mirror — rebuilt from op stream</span>
+        <span class="pulse" id="pulseMirror"></span>
+      </div>
+    </div>
+    <div class="panes">
+      <canvas id="source" width="520" height="400"></canvas>
+      <canvas id="mirror" width="520" height="400"></canvas>
+    </div>
+    <div class="footnote">
+      <span id="hint">click &amp; drag from the triangle to fire a puck</span>
+      <span class="sep">·</span>
+      <span id="integrity" class="ok">in sync</span>
+    </div>
+
+    <script>
+(function(){
+"use strict";
+/* ---------- proxy-symbol.js ---------- */
+/**
+ * Internal symbol to pull the raw target out of a remjs proxy.
+ *
+ * Split into its own module to avoid a circular import between proxy.ts
+ * and codec.ts — codec needs to unwrap proxies while encoding, and
+ * proxy.ts needs to call encode while emitting ops.
+ */
+const RAW = Symbol.for("remjs.raw");
+
+/* ---------- ops.js ---------- */
+/**
+ * Op protocol for remjs.
+ *
+ * An Op describes a single mutation to a JS state tree. The tx side emits ops
+ * as mutations occur; the rx side applies them to reconstruct identical state.
+ *
+ * Paths are arrays of string keys. Array indices are encoded as their string
+ * form ("0", "1", ...) since that matches JS property semantics on arrays.
+ */
+/** Tag used to mark encoded special values that can't be represented as plain JSON. */
+const TAG = "__remjs";
+
+/* ---------- codec.js ---------- */
+/**
+ * Value encoding/decoding.
+ *
+ * `encode` turns an arbitrary JS value into a JSON-safe EncodedValue,
+ * handling all the built-in types that plain JSON can't express.
+ * `decode` is the inverse.
+ *
+ * Plain objects and arrays are encoded recursively. Special types
+ * (undefined, Date, Map, Set, RegExp, BigInt, NaN, ±Infinity) are
+ * wrapped in an object with a reserved `__remjs` tag key.
+ *
+ * Circular references are not supported in the initial version.
+ */
+
+
+function isTagged(v) {
+    return typeof v === "object" && v !== null && TAG in v;
+}
+/** If the value is a remjs proxy, return its raw target; otherwise return as-is. */
+function unwrapRaw(v) {
+    if (v !== null && typeof v === "object" && v[RAW]) {
+        return v[RAW];
+    }
+    return v;
+}
+function encode(value) {
+    const v = unwrapRaw(value);
+    if (v === null)
+        return null;
+    if (v === undefined)
+        return { [TAG]: "undef" };
+    const t = typeof v;
+    if (t === "string" || t === "boolean")
+        return v;
+    if (t === "number") {
+        const n = v;
+        if (Number.isNaN(n))
+            return { [TAG]: "nan" };
+        if (n === Infinity)
+            return { [TAG]: "inf" };
+        if (n === -Infinity)
+            return { [TAG]: "ninf" };
+        return n;
+    }
+    if (t === "bigint")
+        return { [TAG]: "bigint", v: v.toString() };
+    if (v instanceof Date)
+        return { [TAG]: "date", v: v.getTime() };
+    if (v instanceof RegExp)
+        return { [TAG]: "regex", src: v.source, flags: v.flags };
+    if (v instanceof Map) {
+        const entries = [];
+        for (const [k, val] of v) {
+            entries.push([encode(k), encode(val)]);
+        }
+        return { [TAG]: "map", entries };
+    }
+    if (v instanceof Set) {
+        const values = [];
+        for (const val of v)
+            values.push(encode(val));
+        return { [TAG]: "set", values };
+    }
+    if (Array.isArray(v))
+        return v.map(encode);
+    if (t === "object") {
+        const out = {};
+        for (const k of Object.keys(v)) {
+            out[k] = encode(v[k]);
+        }
+        return out;
+    }
+    throw new Error(`remjs: cannot encode value of type ${t}`);
+}
+function decode(value) {
+    if (value === null)
+        return null;
+    const t = typeof value;
+    if (t !== "object")
+        return value;
+    if (Array.isArray(value))
+        return value.map(decode);
+    if (isTagged(value)) {
+        const tag = value[TAG];
+        switch (tag) {
+            case "undef":
+                return undefined;
+            case "nan":
+                return NaN;
+            case "inf":
+                return Infinity;
+            case "ninf":
+                return -Infinity;
+            case "bigint":
+                return BigInt(value.v);
+            case "date":
+                return new Date(value.v);
+            case "regex":
+                return new RegExp(value.src, value.flags);
+            case "map": {
+                const m = new Map();
+                for (const [k, v] of value.entries)
+                    m.set(decode(k), decode(v));
+                return m;
+            }
+            case "set": {
+                const s = new Set();
+                for (const v of value.values)
+                    s.add(decode(v));
+                return s;
+            }
+            default:
+                throw new Error(`remjs: unknown tag ${tag}`);
+        }
+    }
+    const out = {};
+    for (const k of Object.keys(value)) {
+        out[k] = decode(value[k]);
+    }
+    return out;
+}
+
+/* ---------- proxy.js ---------- */
+/**
+ * Deep proxy wrapping for state trees.
+ *
+ * `wrap(target, path, emit)` returns a proxy over `target` that emits an Op
+ * whenever the target is mutated. Nested objects/arrays/Maps/Sets returned
+ * from reads are wrapped lazily with an extended path, so mutations through
+ * any path in the tree are tracked.
+ *
+ * Caching note: once a target is wrapped, the resulting proxy is cached. If
+ * the same target is later placed at a different path in the tree, mutations
+ * through the cached proxy will still be reported at its original path. Most
+ * apps store each object at exactly one path so this is rarely an issue, but
+ * it's a known limitation of the lightweight design.
+ */
+
+
+const proxyCache = new WeakMap();
+function isWrappable(v) {
+    if (v === null || typeof v !== "object")
+        return false;
+    // Leaf types — encoded as values, never mutated in place.
+    if (v instanceof Date)
+        return false;
+    if (v instanceof RegExp)
+        return false;
+    return true;
+}
+function unwrap(v) {
+    if (v !== null && typeof v === "object" && v[RAW]) {
+        return v[RAW];
+    }
+    return v;
+}
+function wrap(target, path, emit) {
+    if (!isWrappable(target))
+        return target;
+    const cached = proxyCache.get(target);
+    if (cached)
+        return cached;
+    let proxy;
+    if (target instanceof Map) {
+        proxy = wrapMap(target, path, emit);
+    }
+    else if (target instanceof Set) {
+        proxy = wrapSet(target, path, emit);
+    }
+    else {
+        proxy = wrapObject(target, path, emit);
+    }
+    proxyCache.set(target, proxy);
+    return proxy;
+}
+function wrapObject(target, path, emit) {
+    return new Proxy(target, {
+        get(t, prop, receiver) {
+            if (prop === RAW)
+                return t;
+            const value = Reflect.get(t, prop, receiver);
+            if (typeof prop === "symbol")
+                return value;
+            if (isWrappable(value)) {
+                return wrap(value, [...path, prop], emit);
+            }
+            return value;
+        },
+        set(t, prop, value, receiver) {
+            if (typeof prop === "symbol") {
+                return Reflect.set(t, prop, value, receiver);
+            }
+            const rawValue = unwrap(value);
+            const result = Reflect.set(t, prop, rawValue, receiver);
+            if (result) {
+                emit({
+                    type: "set",
+                    path: [...path, prop],
+                    value: encode(rawValue),
+                });
+            }
+            return result;
+        },
+        deleteProperty(t, prop) {
+            if (typeof prop === "symbol")
+                return Reflect.deleteProperty(t, prop);
+            const result = Reflect.deleteProperty(t, prop);
+            if (result) {
+                emit({ type: "delete", path: [...path, prop] });
+            }
+            return result;
+        },
+    });
+}
+function wrapMap(target, path, emit) {
+    const proxy = new Proxy(target, {
+        get(t, prop) {
+            if (prop === RAW)
+                return t;
+            if (prop === "set") {
+                return (k, v) => {
+                    const rawK = unwrap(k);
+                    const rawV = unwrap(v);
+                    t.set(rawK, rawV);
+                    emit({
+                        type: "mapSet",
+                        path,
+                        key: encode(rawK),
+                        value: encode(rawV),
+                    });
+                    return proxy;
+                };
+            }
+            if (prop === "delete") {
+                return (k) => {
+                    const rawK = unwrap(k);
+                    const existed = t.delete(rawK);
+                    if (existed) {
+                        emit({ type: "mapDelete", path, key: encode(rawK) });
+                    }
+                    return existed;
+                };
+            }
+            if (prop === "clear") {
+                return () => {
+                    if (t.size > 0) {
+                        t.clear();
+                        emit({ type: "mapClear", path });
+                    }
+                };
+            }
+            // Everything else (get, has, size, keys, values, entries, forEach, @@iterator)
+            // reads from the raw target. Function results are bound to the raw target
+            // so internal slot access works.
+            const val = Reflect.get(t, prop, t);
+            return typeof val === "function" ? val.bind(t) : val;
+        },
+    });
+    return proxy;
+}
+function wrapSet(target, path, emit) {
+    const proxy = new Proxy(target, {
+        get(t, prop) {
+            if (prop === RAW)
+                return t;
+            if (prop === "add") {
+                return (v) => {
+                    const rawV = unwrap(v);
+                    if (!t.has(rawV)) {
+                        t.add(rawV);
+                        emit({ type: "setAdd", path, value: encode(rawV) });
+                    }
+                    return proxy;
+                };
+            }
+            if (prop === "delete") {
+                return (v) => {
+                    const rawV = unwrap(v);
+                    const existed = t.delete(rawV);
+                    if (existed) {
+                        emit({ type: "setDelete", path, value: encode(rawV) });
+                    }
+                    return existed;
+                };
+            }
+            if (prop === "clear") {
+                return () => {
+                    if (t.size > 0) {
+                        t.clear();
+                        emit({ type: "setClear", path });
+                    }
+                };
+            }
+            const val = Reflect.get(t, prop, t);
+            return typeof val === "function" ? val.bind(t) : val;
+        },
+    });
+    return proxy;
+}
+
+/* ---------- apply.js ---------- */
+/**
+ * Receiver-side op application.
+ *
+ * `applyOp` / `applyOps` take a plain state tree (no proxies) and mutate it
+ * in place to match the sender's state. A `snapshot` op replaces the root
+ * entirely; all other ops walk to a target by path and mutate.
+ */
+
+function walkTo(root, path) {
+    let current = root;
+    for (const key of path) {
+        if (current === null || current === undefined) {
+            throw new Error(`remjs: cannot walk path ${path.join(".")} — encountered nullish at ${key}`);
+        }
+        current = current[key];
+    }
+    return current;
+}
+/**
+ * Apply a single op to `root`.
+ *
+ * Returns the (possibly new) root. For most op types the root is mutated in
+ * place and returned unchanged; for `snapshot` ops a brand-new root is
+ * constructed and returned, so callers must always re-bind to the return
+ * value.
+ */
+function applyOp(root, op) {
+    switch (op.type) {
+        case "snapshot":
+            return decode(op.value);
+        case "set": {
+            if (op.path.length === 0) {
+                throw new Error("remjs: cannot apply set op with empty path — use snapshot instead");
+            }
+            const parentPath = op.path.slice(0, -1);
+            const key = op.path[op.path.length - 1];
+            const parent = walkTo(root, parentPath);
+            parent[key] = decode(op.value);
+            return root;
+        }
+        case "delete": {
+            if (op.path.length === 0) {
+                throw new Error("remjs: cannot apply delete op with empty path");
+            }
+            const parentPath = op.path.slice(0, -1);
+            const key = op.path[op.path.length - 1];
+            const parent = walkTo(root, parentPath);
+            delete parent[key];
+            return root;
+        }
+        case "mapSet": {
+            const target = walkTo(root, op.path);
+            target.set(decode(op.key), decode(op.value));
+            return root;
+        }
+        case "mapDelete": {
+            const target = walkTo(root, op.path);
+            target.delete(decode(op.key));
+            return root;
+        }
+        case "mapClear": {
+            const target = walkTo(root, op.path);
+            target.clear();
+            return root;
+        }
+        case "setAdd": {
+            const target = walkTo(root, op.path);
+            target.add(decode(op.value));
+            return root;
+        }
+        case "setDelete": {
+            const target = walkTo(root, op.path);
+            target.delete(decode(op.value));
+            return root;
+        }
+        case "setClear": {
+            const target = walkTo(root, op.path);
+            target.clear();
+            return root;
+        }
+    }
+}
+function applyOps(root, ops) {
+    for (const op of ops)
+        root = applyOp(root, op);
+    return root;
+}
+function createReceiver(initial) {
+    let root = initial ?? {};
+    return {
+        get state() {
+            return root;
+        },
+        apply(ops) {
+            root = applyOps(root, ops);
+        },
+    };
+}
+
+/* ---------- stream.js ---------- */
+/**
+ * createStateStream — the main public API.
+ *
+ * Wraps an initial state object in deep proxies that emit ops on mutation.
+ * Ops are batched according to `batch` and handed to `onOps` as an array.
+ * The caller is responsible for shipping the batch somewhere (WebSocket,
+ * postMessage, in-memory bus, etc).
+ */
+function createStateStream(initial, options = {}) {
+    const { onOps, batch = "microtask" } = options;
+    let pending = [];
+    let scheduled = false;
+    let disposed = false;
+    const flush = () => {
+        scheduled = false;
+        if (pending.length === 0)
+            return;
+        const toSend = pending;
+        pending = [];
+        if (!disposed)
+            onOps?.(toSend);
+    };
+    const schedule = () => {
+        if (scheduled || disposed)
+            return;
+        scheduled = true;
+        if (batch === "sync") {
+            flush();
+        }
+        else if (batch === "microtask") {
+            queueMicrotask(flush);
+        }
+        else if (batch === "raf" && typeof requestAnimationFrame === "function") {
+            requestAnimationFrame(flush);
+        }
+        else if (typeof batch === "number") {
+            setTimeout(flush, batch);
+        }
+        else {
+            queueMicrotask(flush);
+        }
+    };
+    const emit = (op) => {
+        if (disposed)
+            return;
+        pending.push(op);
+        schedule();
+    };
+    const state = wrap(initial, [], emit);
+    return {
+        state,
+        snapshot: () => ({ type: "snapshot", value: encode(initial) }),
+        flush,
+        dispose: () => {
+            disposed = true;
+        },
+    };
+}
+
+
+window.remjs = {
+  createStateStream,
+  applyOp,
+  applyOps,
+  createReceiver,
+  encode,
+  decode,
+  TAG,
+};
+
+})();
+    </script>
+    <script>
+(function () {
+  const { createStateStream, applyOps, decode } = window.remjs;
+
+  const W = 520, H = 400;
+  const LAUNCHER = { x: W / 2, y: H - 32 };
+  const TARGET = { x: W / 2, y: 60 };
+  const ZONES = [
+    { r: 20, points: 5, color: "#f0c040" },
+    { r: 42, points: 3, color: "#6fa8dc" },
+    { r: 68, points: 1, color: "#3e5978" },
+  ];
+  const PUCK_R = 12;
+  const FRICTION = 0.985;
+  const REST_SPEED = 0.2;
+  const RESTITUTION = 0.9;
+
+  const sourceCanvas = document.getElementById("source");
+  const mirrorCanvas = document.getElementById("mirror");
+  const sctx = sourceCanvas.getContext("2d");
+  const mctx = mirrorCanvas.getContext("2d");
+  const $pulseSource = document.getElementById("pulseSource");
+  const $pulseMirror = document.getElementById("pulseMirror");
+  const $integrity = document.getElementById("integrity");
+  const $hint = document.getElementById("hint");
+
+  function makeInitial() { return { tick: 0, nextId: 1, score: 0, pucks: [], shots: [] }; }
+  let source = makeInitial();
+  let stream = null;
+  let proxy = null;
+  let mirror = null;
+
+  function flashPulse(el) {
+    el.classList.add("active");
+    setTimeout(() => el.classList.remove("active"), 100);
+  }
+
+  function pipe(ops) {
+    flashPulse($pulseSource);
+    const wire = JSON.stringify(ops);
+    applyOps(mirror, JSON.parse(wire));
+    flashPulse($pulseMirror);
+  }
+
+  function wireUp() {
+    if (stream) stream.dispose();
+    source = makeInitial();
+    stream = createStateStream(source, { onOps: pipe, batch: "microtask" });
+    proxy = stream.state;
+    mirror = decode(stream.snapshot().value);
+  }
+
+  function launchPuck(aimX, aimY) {
+    const dx = aimX - LAUNCHER.x;
+    const dy = aimY - LAUNCHER.y;
+    const dragLen = Math.hypot(dx, dy);
+    const power = Math.min(13, dragLen / 13);
+    if (power < 0.5) return;
+    const nx = dx / (dragLen || 1);
+    const ny = dy / (dragLen || 1);
+    const puckId = proxy.nextId++;
+    proxy.pucks.push({
+      id: puckId,
+      x: LAUNCHER.x,
+      y: LAUNCHER.y,
+      vx: nx * power,
+      vy: ny * power,
+      color: "hsl(" + ((puckId * 53) % 360) + ", 80%, 60%)",
+      stopped: false,
+      points: 0,
+    });
+    proxy.shots.push({ id: proxy.shots.length + 1, puckId, tick: proxy.tick, result: "in_flight" });
+    $hint.style.opacity = "0.5";
+  }
+
+  function scorePuck(x, y) {
+    const d = Math.hypot(x - TARGET.x, y - TARGET.y);
+    for (const z of ZONES) if (d <= z.r) return z.points;
+    return 0;
+  }
+
+  function recomputeScore() {
+    let total = 0;
+    for (const p of proxy.pucks) if (p.stopped) total += p.points;
+    if (total !== proxy.score) proxy.score = total;
+  }
+
+  function updateShotLogForPuck(puckId, result) {
+    const shots = proxy.shots;
+    for (let j = shots.length - 1; j >= 0; j--) {
+      if (shots[j].puckId === puckId) {
+        if (shots[j].result !== result) shots[j].result = result;
+        return;
+      }
+    }
+  }
+
+  function resolveCollisions() {
+    const pucks = proxy.pucks;
+    for (let i = 0; i < pucks.length; i++) {
+      const a = pucks[i];
+      for (let j = i + 1; j < pucks.length; j++) {
+        const b = pucks[j];
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const ds = dx * dx + dy * dy;
+        const md = PUCK_R * 2;
+        if (ds >= md * md || ds === 0) continue;
+        const d = Math.sqrt(ds);
+        const nx = dx / d, ny = dy / d;
+        const overlap = (md - d) / 2;
+        a.x -= nx * overlap; a.y -= ny * overlap;
+        b.x += nx * overlap; b.y += ny * overlap;
+        const rvn = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
+        if (rvn > 0) continue;
+        const imp = -(1 + RESTITUTION) * rvn / 2;
+        a.vx -= imp * nx; a.vy -= imp * ny;
+        b.vx += imp * nx; b.vy += imp * ny;
+        if (a.stopped) { a.stopped = false; a.points = 0; updateShotLogForPuck(a.id, "bumped"); }
+        if (b.stopped) { b.stopped = false; b.points = 0; updateShotLogForPuck(b.id, "bumped"); }
+      }
+    }
+  }
+
+  function step() {
+    proxy.tick++;
+    const pucks = proxy.pucks;
+    for (const p of pucks) {
+      if (p.stopped) continue;
+      let { x, y, vx, vy } = p;
+      x += vx; y += vy;
+      vx *= FRICTION; vy *= FRICTION;
+      if (x < PUCK_R) { x = PUCK_R; vx = -vx * 0.85; }
+      else if (x > W - PUCK_R) { x = W - PUCK_R; vx = -vx * 0.85; }
+      if (y < PUCK_R) { y = PUCK_R; vy = -vy * 0.85; }
+      else if (y > H - PUCK_R) { y = H - PUCK_R; vy = -vy * 0.85; }
+      p.x = x; p.y = y; p.vx = vx; p.vy = vy;
+    }
+    resolveCollisions();
+    for (const p of pucks) {
+      if (p.stopped) continue;
+      if (Math.hypot(p.vx, p.vy) < REST_SPEED) {
+        p.stopped = true; p.vx = 0; p.vy = 0;
+        const pts = scorePuck(p.x, p.y);
+        p.points = pts;
+        updateShotLogForPuck(p.id, pts > 0 ? "scored " + pts : "miss");
+      }
+    }
+    recomputeScore();
+  }
+
+  let drag = null;
+  function canvasXY(ev) {
+    const r = sourceCanvas.getBoundingClientRect();
+    return { x: ((ev.clientX - r.left) / r.width) * W, y: ((ev.clientY - r.top) / r.height) * H };
+  }
+  sourceCanvas.addEventListener("pointerdown", (ev) => {
+    drag = canvasXY(ev);
+    sourceCanvas.setPointerCapture(ev.pointerId);
+  });
+  sourceCanvas.addEventListener("pointermove", (ev) => { if (drag) drag = canvasXY(ev); });
+  sourceCanvas.addEventListener("pointerup", () => {
+    if (!drag) return;
+    const { x, y } = drag;
+    drag = null;
+    launchPuck(x, y);
+  });
+  sourceCanvas.addEventListener("pointercancel", () => { drag = null; });
+
+  function drawScene(ctx, state, isSource) {
+    ctx.fillStyle = "#06080d";
+    ctx.fillRect(0, 0, W, H);
+
+    // Scoring zones
+    for (let i = ZONES.length - 1; i >= 0; i--) {
+      const z = ZONES[i];
+      ctx.fillStyle = z.color;
+      ctx.globalAlpha = 0.18;
+      ctx.beginPath();
+      ctx.arc(TARGET.x, TARGET.y, z.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = z.color;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(TARGET.x, TARGET.y, z.r, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    // Launcher
+    ctx.fillStyle = "#8b949e";
+    ctx.beginPath();
+    ctx.moveTo(LAUNCHER.x - 12, LAUNCHER.y + 10);
+    ctx.lineTo(LAUNCHER.x + 12, LAUNCHER.y + 10);
+    ctx.lineTo(LAUNCHER.x, LAUNCHER.y - 10);
+    ctx.closePath();
+    ctx.fill();
+
+    // Pucks
+    for (const p of state.pucks) {
+      ctx.fillStyle = p.color;
+      ctx.globalAlpha = p.stopped ? 0.9 : 1;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, PUCK_R, 0, Math.PI * 2);
+      ctx.fill();
+      if (p.stopped) {
+        ctx.strokeStyle = "rgba(255,255,255,0.55)";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, PUCK_R, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = "#fff";
+      ctx.font = "bold 11px var(--font-sans), sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(String(p.id), p.x, p.y);
+    }
+
+    // Aim line
+    if (isSource && drag) {
+      const dx = drag.x - LAUNCHER.x;
+      const dy = drag.y - LAUNCHER.y;
+      const mag = Math.hypot(dx, dy);
+      if (mag > 2) {
+        const nx = dx / mag, ny = dy / mag;
+        const len = Math.min(mag, 13 * 13);
+        ctx.strokeStyle = "#e6edf3";
+        ctx.globalAlpha = 0.7;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(LAUNCHER.x, LAUNCHER.y);
+        ctx.lineTo(LAUNCHER.x + nx * len, LAUNCHER.y + ny * len);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    // Score (top-right corner)
+    ctx.fillStyle = isSource ? "#58a6ff" : "#bc8cff";
+    ctx.font = "bold 20px var(--font-sans), sans-serif";
+    ctx.textAlign = "right";
+    ctx.textBaseline = "top";
+    ctx.fillText(String(state.score), W - 8, 6);
+    ctx.font = "10px var(--font-sans), sans-serif";
+    ctx.fillStyle = "#8b949e";
+    ctx.fillText("score", W - 8, 28);
+  }
+
+  function checkIntegrity() {
+    if (source.tick !== mirror.tick) return false;
+    if (source.score !== mirror.score) return false;
+    if (source.pucks.length !== mirror.pucks.length) return false;
+    if (source.shots.length !== mirror.shots.length) return false;
+    for (let i = 0; i < source.pucks.length; i++) {
+      const a = source.pucks[i], b = mirror.pucks[i];
+      if (a.x !== b.x || a.y !== b.y || a.stopped !== b.stopped || a.points !== b.points) return false;
+    }
+    return true;
+  }
+
+  function loop() {
+    step();
+    stream.flush();
+    drawScene(sctx, source, true);
+    drawScene(mctx, mirror, false);
+    requestAnimationFrame(loop);
+  }
+
+  setInterval(() => {
+    const ok = checkIntegrity();
+    $integrity.className = ok ? "ok" : "bad";
+    $integrity.textContent = ok ? "in sync" : "DESYNC";
+  }, 500);
+
+  wireUp();
+  requestAnimationFrame(loop);
+})();
+    </script>
+  </body>
+</html>

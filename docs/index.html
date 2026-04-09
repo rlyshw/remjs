@@ -1,347 +1,781 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>remjs — streaming JavaScript state serialization</title>
-    <meta
-      name="description"
-      content="remjs is a tiny library that turns JS state mutations into a stream of structured ops so you can mirror a running app's state elsewhere — in another tab, another process, or another machine."
-    />
-    <style>
-      :root {
-        color-scheme: light;
-        --fg: #1a1d22;
-        --muted: #6b7280;
-        --border: #e4e6eb;
-        --card: #ffffff;
-        --bg: #fafafa;
-        --accent: #3e8457;
-        --code-bg: #f5f5f7;
-      }
-      * { box-sizing: border-box; }
-      html, body { padding: 0; margin: 0; }
-      body {
-        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-        color: var(--fg);
-        background: var(--bg);
-        line-height: 1.55;
-      }
-      main {
-        max-width: 1200px;
-        margin: 0 auto;
-        padding: 3em 1.2em 5em;
-      }
-      header { margin-bottom: 2.5em; }
-      h1 {
-        margin: 0 0 0.2em;
-        font-size: 2.4em;
-        letter-spacing: -0.01em;
-      }
-      .tagline {
-        font-size: 1.15em;
-        color: var(--muted);
-        margin: 0 0 1em;
-      }
-      .badges {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.5em;
-        margin-top: 0.8em;
-      }
-      .badges a {
-        display: inline-block;
-        padding: 0.35em 0.85em;
-        background: var(--card);
-        border: 1px solid var(--border);
-        border-radius: 999px;
-        font-size: 0.85em;
-        color: var(--fg);
-        text-decoration: none;
-      }
-      .badges a:hover { border-color: var(--accent); color: var(--accent); }
-      h2 {
-        margin-top: 2.2em;
-        margin-bottom: 0.5em;
-        font-size: 1.5em;
-        letter-spacing: -0.005em;
-      }
-      p { max-width: 760px; }
-      p.lead { font-size: 1.08em; max-width: 760px; }
-      code, pre {
-        font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-      }
-      p code, li code {
-        background: var(--code-bg);
-        padding: 0.12em 0.4em;
-        border-radius: 4px;
-        font-size: 0.92em;
-      }
-      pre {
-        background: var(--card);
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        padding: 1em 1.2em;
-        overflow-x: auto;
-        font-size: 0.88em;
-        line-height: 1.5;
-        max-width: 760px;
-      }
-      .comparison {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 0.8em;
-        max-width: 760px;
-        margin: 1.2em 0;
-      }
-      .comparison .card {
-        background: var(--card);
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        padding: 0.9em 1.1em;
-      }
-      .comparison h3 {
-        margin: 0 0 0.25em;
-        font-size: 1em;
-        color: var(--accent);
-      }
-      .comparison p {
-        margin: 0;
-        font-size: 0.9em;
-        color: var(--muted);
-      }
-      .demo-section {
-        margin-top: 2.5em;
-      }
-      .demo-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: baseline;
-        flex-wrap: wrap;
-        gap: 0.5em;
-        max-width: none;
-      }
-      .demo-header h2 { margin: 0; }
-      .demo-header .meta {
-        color: var(--muted);
-        font-size: 0.9em;
-      }
-      .demo-header .meta a { color: var(--accent); }
-      .demo-frame-wrap {
-        margin-top: 1em;
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        overflow: hidden;
-        background: var(--card);
-        box-shadow: 0 4px 18px rgba(0, 0, 0, 0.05);
-      }
-      iframe {
-        display: block;
-        width: 100%;
-        border: 0;
-        background: var(--bg);
-      }
-      .stats-grid {
-        display: grid;
-        grid-template-columns: repeat(4, 1fr);
-        gap: 1em;
-        max-width: 760px;
-        margin: 1em 0;
-      }
-      .stat-card {
-        background: var(--card);
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        padding: 0.9em 1em;
-      }
-      .stat-card .label {
-        font-size: 0.72em;
-        color: var(--muted);
-        text-transform: uppercase;
-        letter-spacing: 0.06em;
-      }
-      .stat-card .value {
-        font-size: 1.4em;
-        font-weight: 600;
-        font-variant-numeric: tabular-nums;
-        margin-top: 0.15em;
-      }
-      ul { max-width: 760px; padding-left: 1.3em; }
-      li { margin-bottom: 0.35em; }
-      footer {
-        margin-top: 4em;
-        padding-top: 2em;
-        border-top: 1px solid var(--border);
-        color: var(--muted);
-        font-size: 0.9em;
-      }
-      footer a { color: var(--accent); }
-      @media (max-width: 700px) {
-        main { padding: 2em 1em 3em; }
-        h1 { font-size: 1.9em; }
-        .comparison, .stats-grid { grid-template-columns: 1fr; }
-      }
-    </style>
-  </head>
-  <body>
-    <main>
-      <header>
-        <h1>remjs</h1>
-        <p class="tagline">
-          Streaming JavaScript state serialization. Wrap a state tree in a
-          proxy, get a stream of structured ops, rebuild the same state
-          anywhere.
-        </p>
-        <div class="badges">
-          <a href="https://github.com/rlyshw/remjs">GitHub</a>
-          <a href="mirror.html">Open full demo ↗</a>
-        </div>
-      </header>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>remjs — streaming JS state serialization</title>
+  <meta name="description" content="Wrap a JS state tree in a proxy, get a stream of structured ops, rebuild identical state anywhere. Transport-agnostic state mirroring in ~500 LOC." />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-      <p class="lead">
-        <strong>remjs</strong> is a tiny library (~500 LOC) for turning JS
-        state mutations into a transport-agnostic op stream. You wrap a plain
-        object with <code>createStateStream</code>; you mutate it normally;
-        every change gets emitted as a structured op batch. On the receiving
-        side, <code>applyOps</code> rebuilds identical state against a plain
-        object. There's no server, no framework, no schema — you pick the
-        wire.
-      </p>
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --border: #30363d;
+      --text: #e6edf3;
+      --text-muted: #8b949e;
+      --accent: #58a6ff;
+      --accent-dim: #1f6feb;
+      --green: #3fb950;
+      --purple: #bc8cff;
+      --orange: #d29922;
+      --red: #f85149;
+      --code-bg: #0d1117;
+      --font-mono: 'SF Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace;
+      --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    }
 
-      <div class="comparison">
-        <div class="card">
-          <h3>remjs</h3>
-          <p>Streams JS execution state — objects, arrays, Maps, Sets, nested trees. The source-of-truth layer.</p>
-        </div>
-        <div class="card">
-          <h3>remdom</h3>
-          <p>Streams DOM mutation state — nodes, attributes, text. The rendered-output layer.</p>
-        </div>
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-sans);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    kbd {
+      font-family: var(--font-mono);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 0.05em 0.4em;
+      font-size: 0.85em;
+    }
+
+    /* ── Header ── */
+    header {
+      background: rgba(13, 17, 23, 0.85);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    nav {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 0.75rem 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .logo {
+      font-family: var(--font-mono);
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .logo span { color: var(--accent); }
+
+    .nav-links { display: flex; gap: 1.5rem; }
+    .nav-links a { color: var(--text-muted); font-size: 0.9rem; }
+    .nav-links a:hover { color: var(--text); text-decoration: none; }
+
+    /* ── Container / sections ── */
+    .container {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 0 1.5rem;
+    }
+
+    section { padding: 3.5rem 0; }
+
+    /* ── Hero ── */
+    .hero {
+      padding: 4.5rem 0 2rem;
+      text-align: center;
+    }
+
+    .hero h1 {
+      font-family: var(--font-mono);
+      font-size: 3rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      margin-bottom: 0.75rem;
+    }
+
+    .hero h1 span { color: var(--accent); }
+
+    .tagline {
+      font-size: 1.25rem;
+      color: var(--text);
+      max-width: 600px;
+      margin: 0 auto 1rem;
+      font-weight: 500;
+    }
+
+    .hero-desc {
+      font-size: 1rem;
+      color: var(--text-muted);
+      max-width: 680px;
+      margin: 0 auto 2rem;
+      line-height: 1.7;
+    }
+
+    .hero-buttons {
+      display: flex;
+      gap: 1rem;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-bottom: 2rem;
+    }
+
+    .btn {
+      display: inline-block;
+      padding: 0.7rem 1.5rem;
+      border-radius: 6px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      transition: all 0.15s ease;
+    }
+
+    .btn-primary {
+      background: var(--accent-dim);
+      color: #fff;
+      border: 1px solid var(--accent-dim);
+    }
+
+    .btn-primary:hover {
+      background: var(--accent);
+      border-color: var(--accent);
+      text-decoration: none;
+    }
+
+    .btn-secondary {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    .btn-secondary:hover {
+      border-color: var(--text-muted);
+      text-decoration: none;
+    }
+
+    /* ── Hero animation (op stream viz) ── */
+    .hero-anim {
+      display: grid;
+      grid-template-columns: 1fr 1.5fr 1fr;
+      align-items: stretch;
+      gap: 0;
+      max-width: 760px;
+      margin: 2rem auto 0;
+      padding: 0.75rem 1.25rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      min-height: 200px;
+      text-align: left;
+    }
+
+    .anim-pane {
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      line-height: 1.7;
+      padding: 0.5rem 0;
+      position: relative;
+    }
+
+    .anim-label {
+      display: block;
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+      margin-bottom: 0.45rem;
+    }
+
+    .anim-source { color: var(--accent); }
+    .anim-mirror { color: var(--purple); text-align: right; }
+    .anim-source .anim-label { text-align: left; }
+    .anim-mirror .anim-label { text-align: right; }
+
+    .anim-line {
+      display: block;
+      white-space: pre;
+    }
+
+    .anim-line.punct { color: var(--text-muted); opacity: 0.7; }
+
+    /* Source values fade between states.
+       Each mutation has two keyframes: source flash, mirror flash ~300ms later.
+       Cycle is 10s. */
+    .val-count { animation: countCycle 10s linear infinite; }
+    .anim-mirror .val-count { animation: countCycleMirror 10s linear infinite; }
+
+    @keyframes countCycle {
+      0%, 15% { content: "0"; color: var(--accent); }
+      16% { color: var(--orange); text-shadow: 0 0 8px var(--orange); }
+      20%, 35% { color: var(--accent); text-shadow: none; }
+      36% { color: var(--orange); text-shadow: 0 0 8px var(--orange); }
+      40%, 55% { color: var(--accent); }
+      56% { color: var(--orange); text-shadow: 0 0 8px var(--orange); }
+      60%, 100% { color: var(--accent); text-shadow: none; }
+    }
+    @keyframes countCycleMirror {
+      0%, 18% { color: var(--purple); }
+      19% { color: var(--orange); text-shadow: 0 0 8px var(--orange); }
+      23%, 38% { color: var(--purple); text-shadow: none; }
+      39% { color: var(--orange); text-shadow: 0 0 8px var(--orange); }
+      43%, 58% { color: var(--purple); }
+      59% { color: var(--orange); text-shadow: 0 0 8px var(--orange); }
+      63%, 100% { color: var(--purple); text-shadow: none; }
+    }
+
+    .val-count::after {
+      display: inline-block;
+      animation: countValues 10s steps(1) infinite;
+      content: "0";
+    }
+    @keyframes countValues {
+      0%, 16% { content: "0"; }
+      16%, 36% { content: "1"; }
+      36%, 56% { content: "2"; }
+      56%, 100% { content: "3"; }
+    }
+    .anim-mirror .val-count::after {
+      animation: countValuesMirror 10s steps(1) infinite;
+    }
+    @keyframes countValuesMirror {
+      0%, 19% { content: "0"; }
+      19%, 39% { content: "1"; }
+      39%, 59% { content: "2"; }
+      59%, 100% { content: "3"; }
+    }
+
+    .val-name { animation: nameCycle 10s linear infinite; }
+    .anim-mirror .val-name { animation: nameCycleMirror 10s linear infinite; }
+    @keyframes nameCycle {
+      0%, 72% { color: var(--accent); text-shadow: none; }
+      73% { color: var(--orange); text-shadow: 0 0 8px var(--orange); }
+      78%, 100% { color: var(--accent); text-shadow: none; }
+    }
+    @keyframes nameCycleMirror {
+      0%, 76% { color: var(--purple); text-shadow: none; }
+      77% { color: var(--orange); text-shadow: 0 0 8px var(--orange); }
+      82%, 100% { color: var(--purple); text-shadow: none; }
+    }
+    .val-name::after {
+      display: inline-block;
+      animation: nameValues 10s steps(1) infinite;
+      content: '"Alice"';
+    }
+    @keyframes nameValues {
+      0%, 73% { content: '"Alice"'; }
+      73%, 100% { content: '"Bob"'; }
+    }
+    .anim-mirror .val-name::after {
+      animation: nameValuesMirror 10s steps(1) infinite;
+    }
+    @keyframes nameValuesMirror {
+      0%, 77% { content: '"Alice"'; }
+      77%, 100% { content: '"Bob"'; }
+    }
+
+    /* Particle stream between source and mirror */
+    .anim-particles {
+      position: relative;
+      align-self: stretch;
+      margin: 0.5rem 0;
+    }
+
+    .anim-particles::before, .anim-particles::after {
+      content: '';
+      position: absolute;
+      top: 0; bottom: 0;
+      width: 1px;
+      background: linear-gradient(to bottom, transparent, var(--border) 15%, var(--border) 85%, transparent);
+    }
+    .anim-particles::before { left: 0; }
+    .anim-particles::after { right: 0; }
+
+    .particle {
+      position: absolute;
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--orange);
+      box-shadow: 0 0 8px var(--orange);
+      opacity: 0;
+      top: 50%;
+    }
+
+    .particle.p1 { animation: fly 10s linear infinite; animation-delay: 0.2s; }
+    .particle.p2 { animation: fly 10s linear infinite; animation-delay: 4.2s; }
+    .particle.p3 { animation: fly 10s linear infinite; animation-delay: 7.5s; }
+    .particle.p4 { animation: fly 10s linear infinite; animation-delay: 0.7s; top: 30%; }
+    .particle.p5 { animation: fly 10s linear infinite; animation-delay: 4.7s; top: 70%; }
+
+    @keyframes fly {
+      0%, 10% { left: 0; opacity: 0; }
+      11% { opacity: 1; }
+      14% { opacity: 1; left: calc(50% - 2.5px); }
+      18% { opacity: 0; left: 100%; }
+      100% { opacity: 0; }
+    }
+
+    /* ── Section headings ── */
+    h2 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+    }
+
+    h2 span { color: var(--accent); }
+
+    .section-desc {
+      color: var(--text-muted);
+      margin-bottom: 2rem;
+      max-width: 720px;
+      line-height: 1.7;
+    }
+
+    .section-desc code {
+      font-family: var(--font-mono);
+      background: rgba(88, 166, 255, 0.1);
+      color: var(--accent);
+      padding: 0.1rem 0.4rem;
+      border-radius: 3px;
+      font-size: 0.85em;
+    }
+
+    /* ── Code blocks ── */
+    .code-block {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      margin: 1.25rem 0;
+    }
+
+    .code-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.6rem 1rem;
+      background: rgba(48, 54, 61, 0.4);
+      border-bottom: 1px solid var(--border);
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    .code-block pre {
+      padding: 1.25rem;
+      overflow-x: auto;
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      line-height: 1.65;
+      color: var(--text);
+    }
+
+    .code-block .kw { color: #ff7b72; }
+    .code-block .str { color: #a5d6ff; }
+    .code-block .cmt { color: #8b949e; }
+    .code-block .fn { color: #d2a8ff; }
+    .code-block .num { color: #79c0ff; }
+    .code-block .prop { color: #79c0ff; }
+
+    /* ── Live demo ── */
+    .demo-frame {
+      width: 100%;
+      height: 540px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg);
+      display: block;
+    }
+
+    .demo-caption {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-top: 0.75rem;
+      text-align: center;
+    }
+
+    .demo-caption a { color: var(--accent); }
+
+    /* ── Feature grid ── */
+    .feature-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+
+    .feature {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+    }
+
+    .feature h3 {
+      font-family: var(--font-mono);
+      font-size: 0.9rem;
+      margin-bottom: 0.35rem;
+      color: var(--text);
+    }
+
+    .feature h3 .dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-right: 0.5rem;
+      vertical-align: middle;
+    }
+
+    .feature h3 .ok { background: var(--green); }
+    .feature h3 .no { background: var(--red); }
+
+    .feature p {
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      line-height: 1.6;
+    }
+
+    /* ── Stats grid ── */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1rem;
+    }
+
+    .stat {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.9rem 1rem;
+    }
+
+    .stat .label {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+    }
+
+    .stat .value {
+      font-size: 1.5rem;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      color: var(--accent);
+      margin-top: 0.15rem;
+    }
+
+    /* ── Protocol ops ── */
+    .protocol-ops {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.25rem;
+    }
+
+    .op-group {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.25rem;
+    }
+
+    .op-group h3 {
+      font-family: var(--font-mono);
+      font-size: 0.9rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .op-group ul { list-style: none; padding: 0; }
+
+    .op-group li {
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      padding: 0.3rem 0;
+    }
+
+    .op-group li code {
+      color: var(--accent);
+      background: rgba(88, 166, 255, 0.1);
+      padding: 0.1rem 0.4rem;
+      border-radius: 3px;
+      font-size: 0.8rem;
+    }
+
+    /* ── Footer ── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 2rem 0;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.85rem;
+    }
+
+    /* ── Responsive ── */
+    @media (max-width: 700px) {
+      .hero h1 { font-size: 2.2rem; }
+      .tagline { font-size: 1.05rem; }
+      section { padding: 2.5rem 0; }
+      .demo-frame { height: 700px; }
+      .hero-anim { grid-template-columns: 1fr; }
+      .feature-grid { grid-template-columns: 1fr; }
+      .stats-grid { grid-template-columns: 1fr 1fr; }
+      .protocol-ops { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <nav>
+    <div class="logo">rem<span>js</span></div>
+    <div class="nav-links">
+      <a href="#how">How it works</a>
+      <a href="#demo">Demo</a>
+      <a href="#protocol">Protocol</a>
+      <a href="https://github.com/rlyshw/remjs">GitHub</a>
+    </div>
+  </nav>
+</header>
+
+<main class="container">
+
+  <!-- Hero -->
+  <section class="hero">
+    <h1>rem<span>js</span></h1>
+    <p class="tagline">Streaming JS state serialization</p>
+    <p class="hero-desc">
+      Wrap a JavaScript state tree in a proxy, get a stream of structured
+      ops describing every mutation, rebuild identical state anywhere.
+      No framework, no transport, ~500 lines of TypeScript.
+    </p>
+
+    <div class="hero-buttons">
+      <a href="#demo" class="btn btn-primary">Live demo</a>
+      <a href="https://github.com/rlyshw/remjs" class="btn btn-secondary">View on GitHub</a>
+    </div>
+
+    <div class="hero-anim" aria-hidden="true">
+      <div class="anim-pane anim-source">
+        <span class="anim-label">source</span><span class="anim-line">state = {</span><span class="anim-line">  count: <span class="val-count"></span>,</span><span class="anim-line">  user: {</span><span class="anim-line">    name: <span class="val-name"></span></span><span class="anim-line">  }</span><span class="anim-line">}</span>
       </div>
+      <div class="anim-particles">
+        <div class="particle p1"></div>
+        <div class="particle p2"></div>
+        <div class="particle p3"></div>
+        <div class="particle p4"></div>
+        <div class="particle p5"></div>
+      </div>
+      <div class="anim-pane anim-mirror">
+        <span class="anim-label">mirror</span><span class="anim-line">state = {</span><span class="anim-line">  count: <span class="val-count"></span>,</span><span class="anim-line">  user: {</span><span class="anim-line">    name: <span class="val-name"></span></span><span class="anim-line">  }</span><span class="anim-line">}</span>
+      </div>
+    </div>
+  </section>
 
-      <section class="demo-section">
-        <div class="demo-header">
-          <h2>Live demo: shuffleboard mirror</h2>
-          <div class="meta">
-            single 45 KB HTML file · no server ·
-            <a href="mirror.html" target="_blank" rel="noopener">open full screen ↗</a>
-          </div>
-        </div>
+  <!-- How it works -->
+  <section id="how">
+    <h2>How it <span>works</span></h2>
+    <p class="section-desc">
+      <code>createStateStream</code> wraps a plain object with a deep
+      <code>Proxy</code> that intercepts every property write, array
+      method, and <code>Map</code>/<code>Set</code> mutation. Each
+      mutation becomes a structured op. You ship the ops over any
+      transport — WebSocket, <code>postMessage</code>,
+      <code>BroadcastChannel</code>, an in-process function call — and
+      the receiver calls <code>applyOps</code> on a plain object to
+      rebuild the same state.
+    </p>
 
-        <p>
-          Two canvases. The left court owns the state. Click-and-drag from
-          the launcher to fire a puck — friction, wall bounces, and
-          puck-on-puck collisions run on the source only. Every mutation
-          flows as a <code>set</code> op through
-          <code>JSON.stringify → JSON.parse → applyOps</code> onto a plain
-          object that drives the right court. They stay byte-for-byte
-          identical, verified every tick. Pause with <kbd>space</kbd>, step
-          a frame with <kbd>→</kbd>, or enable "show state" to compare the
-          raw JSON side-by-side.
-        </p>
+    <div class="code-block">
+      <div class="code-header">source side</div>
+      <pre><span class="kw">import</span> { <span class="fn">createStateStream</span> } <span class="kw">from</span> <span class="str">'remjs'</span>;
 
-        <div class="demo-frame-wrap">
-          <iframe
-            src="mirror.html"
-            title="remjs shuffleboard mirror demo"
-            height="1300"
-            loading="lazy"
-          ></iframe>
-        </div>
-      </section>
-
-      <h2>Usage</h2>
-      <pre><code>import { createStateStream, applyOps, decode } from 'remjs';
-
-// Sender: wrap a plain state object
-const { state, snapshot } = createStateStream(
-  { count: 0, todos: [], user: { name: 'Alice' } },
-  {
-    onOps: (ops) =&gt; ws.send(JSON.stringify(ops)),
-    batch: 'microtask',
-  },
+<span class="kw">const</span> { state, snapshot } = <span class="fn">createStateStream</span>(
+  { <span class="prop">count</span>: <span class="num">0</span>, <span class="prop">user</span>: { <span class="prop">name</span>: <span class="str">'Alice'</span> } },
+  { <span class="prop">onOps</span>: (ops) =&gt; transport.<span class="fn">send</span>(ops) },
 );
 
-// Mutate normally — ops are emitted automatically
-state.count++;
-state.todos.push('buy milk');
-state.user.name = 'Bob';
+<span class="cmt">// mutate normally — ops are emitted automatically</span>
+state.<span class="prop">count</span>++;
+state.<span class="prop">user</span>.<span class="prop">name</span> = <span class="str">'Bob'</span>;</pre>
+    </div>
 
-// Receiver: start from a snapshot, apply incoming batches
-let mirror = decode(snapshot().value);
-ws.onmessage = (ev) =&gt; {
-  mirror = applyOps(mirror, JSON.parse(ev.data));
-};</code></pre>
+    <div class="code-block">
+      <div class="code-header">receiver side</div>
+      <pre><span class="kw">import</span> { <span class="fn">applyOps</span>, <span class="fn">decode</span> } <span class="kw">from</span> <span class="str">'remjs'</span>;
 
-      <h2>What ops look like</h2>
-      <pre><code>{ "type": "set",    "path": ["count"],        "value": 1 }
-{ "type": "set",    "path": ["user", "name"], "value": "Bob" }
-{ "type": "delete", "path": ["todos", "0"] }
-{ "type": "mapSet", "path": ["cache"], "key": "k", "value": 42 }</code></pre>
+<span class="kw">let</span> mirror = <span class="fn">decode</span>(initialSnapshot.value);
+transport.onMessage = (ops) =&gt; {
+  mirror = <span class="fn">applyOps</span>(mirror, ops);
+};</pre>
+    </div>
 
-      <p>
-        Plus <code>mapDelete</code>, <code>mapClear</code>,
-        <code>setAdd</code>, <code>setDelete</code>, <code>setClear</code>,
-        and <code>snapshot</code>. Values that JSON can't express —
-        <code>undefined</code>, <code>NaN</code>, <code>Date</code>,
-        <code>BigInt</code>, <code>Map</code>, <code>Set</code>,
-        <code>RegExp</code> — are tagged with a reserved
-        <code>__remjs</code> key at encode time and restored on decode.
-      </p>
+    <p class="section-desc" style="margin-top: 1.5rem;">
+      The library is transport-agnostic. It gives you an op stream and a
+      receiver; you decide how to move bytes. The demo below does it with
+      a single function call — both sides live in the same browser tab.
+    </p>
+  </section>
 
-      <h2>Performance</h2>
-      <p>
-        Headless benchmark: 250 rigid-body physics bodies, 4 field updates
-        per body per frame, full JSON serialize/parse round-trip.
-      </p>
-      <div class="stats-grid">
-        <div class="stat-card">
-          <div class="label">ops / sec</div>
-          <div class="value">~990,000</div>
-        </div>
-        <div class="stat-card">
-          <div class="label">frame rate cap</div>
-          <div class="value">~989 fps</div>
-        </div>
-        <div class="stat-card">
-          <div class="label">wire bytes / sec</div>
-          <div class="value">67 MB/s</div>
-        </div>
-        <div class="stat-card">
-          <div class="label">bytes / op</div>
-          <div class="value">~70</div>
-        </div>
+  <!-- Live demo -->
+  <section id="demo">
+    <h2>Live <span>demo</span></h2>
+    <p class="section-desc">
+      Shuffleboard mirror. The left court owns the state — a proxied JS
+      object with a score, a list of pucks, and a shot log. Click and drag
+      from the launcher to fire. Every mutation flows through
+      <code>JSON.stringify</code> → <code>JSON.parse</code> →
+      <code>applyOps</code> onto a plain object driving the right court.
+      Byte-for-byte identical, verified every tick.
+    </p>
+    <iframe src="mirror-embed.html" class="demo-frame" title="remjs shuffleboard mirror demo" loading="lazy"></iframe>
+    <p class="demo-caption">
+      <a href="mirror.html" target="_blank" rel="noopener">Open full demo</a>
+      (adds pause, step, speed control, live JSON readout, perf stats)
+      ·
+      <a href="https://github.com/rlyshw/remjs/blob/master/examples/mirror/index.html">View source</a>
+    </p>
+  </section>
+
+  <!-- What's interceptable -->
+  <section id="interceptable">
+    <h2>What's <span>interceptable</span></h2>
+    <p class="section-desc">
+      remjs scopes itself to application state: things you keep in plain
+      objects — Redux stores, Zustand stores, React state trees, arbitrary
+      JS object graphs. Closures and primitive locals need a build-time
+      source transform; everything else goes through the Proxy.
+    </p>
+
+    <div class="feature-grid">
+      <div class="feature">
+        <h3><span class="dot ok"></span>Object property writes</h3>
+        <p>Plain set / delete via the generic Proxy trap.</p>
       </div>
+      <div class="feature">
+        <h3><span class="dot ok"></span>Array mutations</h3>
+        <p>push / pop / splice / sort decompose into per-index sets + length change.</p>
+      </div>
+      <div class="feature">
+        <h3><span class="dot ok"></span>Map &amp; Set mutations</h3>
+        <p>set / delete / clear / add wrapped per method — internal slots work.</p>
+      </div>
+      <div class="feature">
+        <h3><span class="dot ok"></span>Nested trees</h3>
+        <p>Child objects wrapped lazily on read with the extended path.</p>
+      </div>
+      <div class="feature">
+        <h3><span class="dot ok"></span>Special types</h3>
+        <p>Date, RegExp, BigInt, Map, Set, NaN, ±Infinity survive JSON.stringify.</p>
+      </div>
+      <div class="feature">
+        <h3><span class="dot no"></span>Closure state</h3>
+        <p>Not observable via Proxy — needs a source transform.</p>
+      </div>
+    </div>
+  </section>
 
-      <h2>Transports</h2>
-      <p>
-        remjs has no built-in transport — <code>onOps</code> hands you a
-        batch and it's your job to ship it. Reasonable options:
-      </p>
-      <ul>
-        <li><strong>WebSocket</strong> — multi-client sync</li>
-        <li><strong>postMessage</strong> — to a Worker or iframe</li>
-        <li><strong>BroadcastChannel</strong> — peer-to-peer between tabs, no server</li>
-        <li><strong>WebRTC data channel</strong> — peer-to-peer across machines</li>
-        <li><strong>A local <code>applyOps</code> call</strong> — in-page mirroring (the shuffleboard above works this way — its entire "transport" is a function call)</li>
-        <li><strong>A log file</strong> — for record/replay debugging</li>
-      </ul>
+  <!-- Performance -->
+  <section id="performance">
+    <h2>Per<span>formance</span></h2>
+    <p class="section-desc">
+      Headless benchmark on Node 24: 250 rigid bodies, 4 field updates
+      per body per frame, full <code>JSON.stringify</code> →
+      <code>JSON.parse</code> → <code>applyOps</code> round-trip.
+      Zero desync across 600 frames.
+    </p>
 
-      <h2>Scope</h2>
-      <ul>
-        <li>Captures mutations on objects, arrays, Maps, Sets, and nested trees.</li>
-        <li>Does <strong>not</strong> capture closures, local variables, or primitives — use a build-time source transform for those.</li>
-        <li>Applies ops in order. Concurrent multi-writer scenarios need a CRDT/OT layer above remjs.</li>
-        <li>The receiver trusts the op stream; there's no schema enforcement.</li>
-      </ul>
+    <div class="stats-grid">
+      <div class="stat"><div class="label">ops / sec</div><div class="value">~990 K</div></div>
+      <div class="stat"><div class="label">frame rate cap</div><div class="value">~989 fps</div></div>
+      <div class="stat"><div class="label">wire bytes / sec</div><div class="value">67 MB/s</div></div>
+      <div class="stat"><div class="label">bytes / op</div><div class="value">~70</div></div>
+    </div>
+  </section>
 
-      <footer>
-        <p>
-          Source: <a href="https://github.com/rlyshw/remjs">github.com/rlyshw/remjs</a> ·
-          MIT licensed ·
-          Full demo: <a href="mirror.html">mirror.html</a>
-        </p>
-      </footer>
-    </main>
-  </body>
+  <!-- Protocol -->
+  <section id="protocol">
+    <h2>The <span>protocol</span></h2>
+    <p class="section-desc">
+      JSON over the wire. Paths are arrays of string keys. Values that
+      JSON can't express — <code>undefined</code>, <code>NaN</code>,
+      <code>Date</code>, <code>BigInt</code>, <code>Map</code>,
+      <code>Set</code>, <code>RegExp</code> — are tagged with a reserved
+      <code>__remjs</code> key at encode time and restored on decode.
+    </p>
+
+    <div class="code-block">
+      <div class="code-header">example op stream</div>
+      <pre>{ <span class="str">"type"</span>: <span class="str">"set"</span>,    <span class="str">"path"</span>: [<span class="str">"count"</span>],        <span class="str">"value"</span>: <span class="num">1</span> }
+{ <span class="str">"type"</span>: <span class="str">"set"</span>,    <span class="str">"path"</span>: [<span class="str">"user"</span>, <span class="str">"name"</span>], <span class="str">"value"</span>: <span class="str">"Bob"</span> }
+{ <span class="str">"type"</span>: <span class="str">"delete"</span>, <span class="str">"path"</span>: [<span class="str">"todos"</span>, <span class="str">"0"</span>] }
+{ <span class="str">"type"</span>: <span class="str">"mapSet"</span>, <span class="str">"path"</span>: [<span class="str">"cache"</span>], <span class="str">"key"</span>: <span class="str">"k"</span>, <span class="str">"value"</span>: <span class="num">42</span> }
+{ <span class="str">"type"</span>: <span class="str">"snapshot"</span>, <span class="str">"value"</span>: { <span class="cmt">/* full tree */</span> } }</pre>
+    </div>
+
+    <div class="protocol-ops">
+      <div class="op-group">
+        <h3 style="color: var(--green)">Object / array</h3>
+        <ul>
+          <li><code>snapshot</code> &mdash; full tree serialization</li>
+          <li><code>set</code> &mdash; property write at path</li>
+          <li><code>delete</code> &mdash; property delete at path</li>
+        </ul>
+      </div>
+      <div class="op-group">
+        <h3 style="color: var(--purple)">Map / Set</h3>
+        <ul>
+          <li><code>mapSet</code> / <code>mapDelete</code> / <code>mapClear</code></li>
+          <li><code>setAdd</code> / <code>setDelete</code> / <code>setClear</code></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- Scope -->
+  <section id="scope">
+    <h2>Non-<span>goals</span></h2>
+    <p class="section-desc">
+      remjs deliberately doesn't do these. If you need them, add a layer
+      above:
+    </p>
+    <div class="feature-grid">
+      <div class="feature">
+        <h3><span class="dot no"></span>Transport</h3>
+        <p>No sockets, no auth, no framing. You pick the wire.</p>
+      </div>
+      <div class="feature">
+        <h3><span class="dot no"></span>Conflict resolution</h3>
+        <p>Ops apply in order. Multi-writer needs a CRDT or OT layer.</p>
+      </div>
+      <div class="feature">
+        <h3><span class="dot no"></span>Schema enforcement</h3>
+        <p>The receiver trusts the op stream.</p>
+      </div>
+      <div class="feature">
+        <h3><span class="dot no"></span>Closure capture</h3>
+        <p>Use a source transform for locals and closures.</p>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="container">
+    <p>remjs is open source under the MIT License.</p>
+    <p style="margin-top: 0.5rem;">
+      <a href="https://github.com/rlyshw/remjs">github.com/rlyshw/remjs</a>
+    </p>
+  </div>
+</footer>
+
+</body>
 </html>

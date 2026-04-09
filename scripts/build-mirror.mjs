@@ -18,14 +18,6 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DIST = path.join(ROOT, "dist");
-/** The standalone file is written to two locations:
- *    examples/mirror/index.html  — for local `file://` opening
- *    docs/mirror.html            — served by GitHub Pages
- *  Both are identical byte-for-byte; the landing page iframes the Pages copy. */
-const OUTPUTS = [
-  path.join(ROOT, "examples", "mirror", "index.html"),
-  path.join(ROOT, "docs", "mirror.html"),
-];
 
 /** Order matters: each file can only refer to identifiers from earlier files. */
 const SOURCES = [
@@ -72,7 +64,7 @@ window.remjs = {
   return `(function(){\n"use strict";\n${parts.join("\n")}\n})();`;
 }
 
-const HTML_TEMPLATE = (bundle) => `<!doctype html>
+const FULL_TEMPLATE = (bundle) => `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -1043,10 +1035,427 @@ ${bundle}
 </html>
 `;
 
+/**
+ * Minimal embed variant — just the two canvases and the shuffleboard game,
+ * dark-themed to match the landing page. No controls, no stats grid, no
+ * JSON readout. Used as an iframe on docs/index.html.
+ */
+const EMBED_TEMPLATE = (bundle) => `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>remjs mirror embed</title>
+    <style>
+      :root {
+        --bg: #0d1117;
+        --surface: #161b22;
+        --border: #30363d;
+        --text: #e6edf3;
+        --text-muted: #8b949e;
+        --accent: #58a6ff;
+        --purple: #bc8cff;
+        --green: #3fb950;
+        --font-mono: 'SF Mono', 'Cascadia Code', 'JetBrains Mono', Consolas, monospace;
+        --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body { height: 100%; }
+      body {
+        font-family: var(--font-sans);
+        color: var(--text);
+        background: var(--bg);
+        padding: 1rem 1.25rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.85rem;
+      }
+      .label-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
+      }
+      .label {
+        font-family: var(--font-mono);
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--text-muted);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .label .side-source { color: var(--accent); }
+      .label .side-mirror { color: var(--purple); }
+      .pulse {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--green);
+        transition: box-shadow 0.08s, transform 0.08s;
+        opacity: 0.25;
+      }
+      .pulse.active {
+        opacity: 1;
+        box-shadow: 0 0 0 5px rgba(63, 185, 80, 0.35);
+        transform: scale(1.2);
+      }
+      .panes {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
+        flex: 1;
+        min-height: 0;
+      }
+      canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+        background: #06080d;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        cursor: crosshair;
+      }
+      .footnote {
+        font-family: var(--font-mono);
+        font-size: 0.72rem;
+        color: var(--text-muted);
+        text-align: center;
+      }
+      .footnote .sep { margin: 0 0.4rem; color: var(--border); }
+      .footnote .ok { color: var(--green); }
+      .footnote .bad { color: #f85149; }
+    </style>
+  </head>
+  <body>
+    <div class="label-row">
+      <div class="label">
+        <span class="side-source">source — your court</span>
+        <span class="pulse" id="pulseSource"></span>
+      </div>
+      <div class="label">
+        <span class="side-mirror">mirror — rebuilt from op stream</span>
+        <span class="pulse" id="pulseMirror"></span>
+      </div>
+    </div>
+    <div class="panes">
+      <canvas id="source" width="520" height="400"></canvas>
+      <canvas id="mirror" width="520" height="400"></canvas>
+    </div>
+    <div class="footnote">
+      <span id="hint">click &amp; drag from the triangle to fire a puck</span>
+      <span class="sep">·</span>
+      <span id="integrity" class="ok">in sync</span>
+    </div>
+
+    <script>
+${bundle}
+    </script>
+    <script>
+(function () {
+  const { createStateStream, applyOps, decode } = window.remjs;
+
+  const W = 520, H = 400;
+  const LAUNCHER = { x: W / 2, y: H - 32 };
+  const TARGET = { x: W / 2, y: 60 };
+  const ZONES = [
+    { r: 20, points: 5, color: "#f0c040" },
+    { r: 42, points: 3, color: "#6fa8dc" },
+    { r: 68, points: 1, color: "#3e5978" },
+  ];
+  const PUCK_R = 12;
+  const FRICTION = 0.985;
+  const REST_SPEED = 0.2;
+  const RESTITUTION = 0.9;
+
+  const sourceCanvas = document.getElementById("source");
+  const mirrorCanvas = document.getElementById("mirror");
+  const sctx = sourceCanvas.getContext("2d");
+  const mctx = mirrorCanvas.getContext("2d");
+  const $pulseSource = document.getElementById("pulseSource");
+  const $pulseMirror = document.getElementById("pulseMirror");
+  const $integrity = document.getElementById("integrity");
+  const $hint = document.getElementById("hint");
+
+  function makeInitial() { return { tick: 0, nextId: 1, score: 0, pucks: [], shots: [] }; }
+  let source = makeInitial();
+  let stream = null;
+  let proxy = null;
+  let mirror = null;
+
+  function flashPulse(el) {
+    el.classList.add("active");
+    setTimeout(() => el.classList.remove("active"), 100);
+  }
+
+  function pipe(ops) {
+    flashPulse($pulseSource);
+    const wire = JSON.stringify(ops);
+    applyOps(mirror, JSON.parse(wire));
+    flashPulse($pulseMirror);
+  }
+
+  function wireUp() {
+    if (stream) stream.dispose();
+    source = makeInitial();
+    stream = createStateStream(source, { onOps: pipe, batch: "microtask" });
+    proxy = stream.state;
+    mirror = decode(stream.snapshot().value);
+  }
+
+  function launchPuck(aimX, aimY) {
+    const dx = aimX - LAUNCHER.x;
+    const dy = aimY - LAUNCHER.y;
+    const dragLen = Math.hypot(dx, dy);
+    const power = Math.min(13, dragLen / 13);
+    if (power < 0.5) return;
+    const nx = dx / (dragLen || 1);
+    const ny = dy / (dragLen || 1);
+    const puckId = proxy.nextId++;
+    proxy.pucks.push({
+      id: puckId,
+      x: LAUNCHER.x,
+      y: LAUNCHER.y,
+      vx: nx * power,
+      vy: ny * power,
+      color: "hsl(" + ((puckId * 53) % 360) + ", 80%, 60%)",
+      stopped: false,
+      points: 0,
+    });
+    proxy.shots.push({ id: proxy.shots.length + 1, puckId, tick: proxy.tick, result: "in_flight" });
+    $hint.style.opacity = "0.5";
+  }
+
+  function scorePuck(x, y) {
+    const d = Math.hypot(x - TARGET.x, y - TARGET.y);
+    for (const z of ZONES) if (d <= z.r) return z.points;
+    return 0;
+  }
+
+  function recomputeScore() {
+    let total = 0;
+    for (const p of proxy.pucks) if (p.stopped) total += p.points;
+    if (total !== proxy.score) proxy.score = total;
+  }
+
+  function updateShotLogForPuck(puckId, result) {
+    const shots = proxy.shots;
+    for (let j = shots.length - 1; j >= 0; j--) {
+      if (shots[j].puckId === puckId) {
+        if (shots[j].result !== result) shots[j].result = result;
+        return;
+      }
+    }
+  }
+
+  function resolveCollisions() {
+    const pucks = proxy.pucks;
+    for (let i = 0; i < pucks.length; i++) {
+      const a = pucks[i];
+      for (let j = i + 1; j < pucks.length; j++) {
+        const b = pucks[j];
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const ds = dx * dx + dy * dy;
+        const md = PUCK_R * 2;
+        if (ds >= md * md || ds === 0) continue;
+        const d = Math.sqrt(ds);
+        const nx = dx / d, ny = dy / d;
+        const overlap = (md - d) / 2;
+        a.x -= nx * overlap; a.y -= ny * overlap;
+        b.x += nx * overlap; b.y += ny * overlap;
+        const rvn = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
+        if (rvn > 0) continue;
+        const imp = -(1 + RESTITUTION) * rvn / 2;
+        a.vx -= imp * nx; a.vy -= imp * ny;
+        b.vx += imp * nx; b.vy += imp * ny;
+        if (a.stopped) { a.stopped = false; a.points = 0; updateShotLogForPuck(a.id, "bumped"); }
+        if (b.stopped) { b.stopped = false; b.points = 0; updateShotLogForPuck(b.id, "bumped"); }
+      }
+    }
+  }
+
+  function step() {
+    proxy.tick++;
+    const pucks = proxy.pucks;
+    for (const p of pucks) {
+      if (p.stopped) continue;
+      let { x, y, vx, vy } = p;
+      x += vx; y += vy;
+      vx *= FRICTION; vy *= FRICTION;
+      if (x < PUCK_R) { x = PUCK_R; vx = -vx * 0.85; }
+      else if (x > W - PUCK_R) { x = W - PUCK_R; vx = -vx * 0.85; }
+      if (y < PUCK_R) { y = PUCK_R; vy = -vy * 0.85; }
+      else if (y > H - PUCK_R) { y = H - PUCK_R; vy = -vy * 0.85; }
+      p.x = x; p.y = y; p.vx = vx; p.vy = vy;
+    }
+    resolveCollisions();
+    for (const p of pucks) {
+      if (p.stopped) continue;
+      if (Math.hypot(p.vx, p.vy) < REST_SPEED) {
+        p.stopped = true; p.vx = 0; p.vy = 0;
+        const pts = scorePuck(p.x, p.y);
+        p.points = pts;
+        updateShotLogForPuck(p.id, pts > 0 ? "scored " + pts : "miss");
+      }
+    }
+    recomputeScore();
+  }
+
+  let drag = null;
+  function canvasXY(ev) {
+    const r = sourceCanvas.getBoundingClientRect();
+    return { x: ((ev.clientX - r.left) / r.width) * W, y: ((ev.clientY - r.top) / r.height) * H };
+  }
+  sourceCanvas.addEventListener("pointerdown", (ev) => {
+    drag = canvasXY(ev);
+    sourceCanvas.setPointerCapture(ev.pointerId);
+  });
+  sourceCanvas.addEventListener("pointermove", (ev) => { if (drag) drag = canvasXY(ev); });
+  sourceCanvas.addEventListener("pointerup", () => {
+    if (!drag) return;
+    const { x, y } = drag;
+    drag = null;
+    launchPuck(x, y);
+  });
+  sourceCanvas.addEventListener("pointercancel", () => { drag = null; });
+
+  function drawScene(ctx, state, isSource) {
+    ctx.fillStyle = "#06080d";
+    ctx.fillRect(0, 0, W, H);
+
+    // Scoring zones
+    for (let i = ZONES.length - 1; i >= 0; i--) {
+      const z = ZONES[i];
+      ctx.fillStyle = z.color;
+      ctx.globalAlpha = 0.18;
+      ctx.beginPath();
+      ctx.arc(TARGET.x, TARGET.y, z.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = z.color;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(TARGET.x, TARGET.y, z.r, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    // Launcher
+    ctx.fillStyle = "#8b949e";
+    ctx.beginPath();
+    ctx.moveTo(LAUNCHER.x - 12, LAUNCHER.y + 10);
+    ctx.lineTo(LAUNCHER.x + 12, LAUNCHER.y + 10);
+    ctx.lineTo(LAUNCHER.x, LAUNCHER.y - 10);
+    ctx.closePath();
+    ctx.fill();
+
+    // Pucks
+    for (const p of state.pucks) {
+      ctx.fillStyle = p.color;
+      ctx.globalAlpha = p.stopped ? 0.9 : 1;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, PUCK_R, 0, Math.PI * 2);
+      ctx.fill();
+      if (p.stopped) {
+        ctx.strokeStyle = "rgba(255,255,255,0.55)";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, PUCK_R, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = "#fff";
+      ctx.font = "bold 11px var(--font-sans), sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(String(p.id), p.x, p.y);
+    }
+
+    // Aim line
+    if (isSource && drag) {
+      const dx = drag.x - LAUNCHER.x;
+      const dy = drag.y - LAUNCHER.y;
+      const mag = Math.hypot(dx, dy);
+      if (mag > 2) {
+        const nx = dx / mag, ny = dy / mag;
+        const len = Math.min(mag, 13 * 13);
+        ctx.strokeStyle = "#e6edf3";
+        ctx.globalAlpha = 0.7;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(LAUNCHER.x, LAUNCHER.y);
+        ctx.lineTo(LAUNCHER.x + nx * len, LAUNCHER.y + ny * len);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    // Score (top-right corner)
+    ctx.fillStyle = isSource ? "#58a6ff" : "#bc8cff";
+    ctx.font = "bold 20px var(--font-sans), sans-serif";
+    ctx.textAlign = "right";
+    ctx.textBaseline = "top";
+    ctx.fillText(String(state.score), W - 8, 6);
+    ctx.font = "10px var(--font-sans), sans-serif";
+    ctx.fillStyle = "#8b949e";
+    ctx.fillText("score", W - 8, 28);
+  }
+
+  function checkIntegrity() {
+    if (source.tick !== mirror.tick) return false;
+    if (source.score !== mirror.score) return false;
+    if (source.pucks.length !== mirror.pucks.length) return false;
+    if (source.shots.length !== mirror.shots.length) return false;
+    for (let i = 0; i < source.pucks.length; i++) {
+      const a = source.pucks[i], b = mirror.pucks[i];
+      if (a.x !== b.x || a.y !== b.y || a.stopped !== b.stopped || a.points !== b.points) return false;
+    }
+    return true;
+  }
+
+  function loop() {
+    step();
+    stream.flush();
+    drawScene(sctx, source, true);
+    drawScene(mctx, mirror, false);
+    requestAnimationFrame(loop);
+  }
+
+  setInterval(() => {
+    const ok = checkIntegrity();
+    $integrity.className = ok ? "ok" : "bad";
+    $integrity.textContent = ok ? "in sync" : "DESYNC";
+  }, 500);
+
+  wireUp();
+  requestAnimationFrame(loop);
+})();
+    </script>
+  </body>
+</html>
+`;
+
+/** Output targets:
+ *  - The full, feature-rich mirror demo (controls + stats + readout)
+ *    goes to examples/mirror/index.html and docs/mirror.html so it's
+ *    available both as a local file and via GitHub Pages.
+ *  - A minimal embed variant (just the two canvases + click-to-fire)
+ *    goes to docs/mirror-embed.html, used as an iframe in the landing
+ *    page. Dark-themed to match the landing design. */
+function outputs() {
+  return [
+    { path: path.join(ROOT, "examples", "mirror", "index.html"), template: FULL_TEMPLATE },
+    { path: path.join(ROOT, "docs", "mirror.html"), template: FULL_TEMPLATE },
+    { path: path.join(ROOT, "docs", "mirror-embed.html"), template: EMBED_TEMPLATE },
+  ];
+}
+
 async function main() {
   const bundle = await buildBundle();
-  const html = HTML_TEMPLATE(bundle);
-  for (const out of OUTPUTS) {
+  for (const { path: out, template } of outputs()) {
+    const html = template(bundle);
     await fs.mkdir(path.dirname(out), { recursive: true });
     await fs.writeFile(out, html);
     const stats = await fs.stat(out);
