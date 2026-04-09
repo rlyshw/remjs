@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>remjs — streaming JavaScript state serialization</title>
+    <meta
+      name="description"
+      content="remjs is a tiny library that turns JS state mutations into a stream of structured ops so you can mirror a running app's state elsewhere — in another tab, another process, or another machine."
+    />
+    <style>
+      :root {
+        color-scheme: light;
+        --fg: #1a1d22;
+        --muted: #6b7280;
+        --border: #e4e6eb;
+        --card: #ffffff;
+        --bg: #fafafa;
+        --accent: #3e8457;
+        --code-bg: #f5f5f7;
+      }
+      * { box-sizing: border-box; }
+      html, body { padding: 0; margin: 0; }
+      body {
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        color: var(--fg);
+        background: var(--bg);
+        line-height: 1.55;
+      }
+      main {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 3em 1.2em 5em;
+      }
+      header { margin-bottom: 2.5em; }
+      h1 {
+        margin: 0 0 0.2em;
+        font-size: 2.4em;
+        letter-spacing: -0.01em;
+      }
+      .tagline {
+        font-size: 1.15em;
+        color: var(--muted);
+        margin: 0 0 1em;
+      }
+      .badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5em;
+        margin-top: 0.8em;
+      }
+      .badges a {
+        display: inline-block;
+        padding: 0.35em 0.85em;
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        font-size: 0.85em;
+        color: var(--fg);
+        text-decoration: none;
+      }
+      .badges a:hover { border-color: var(--accent); color: var(--accent); }
+      h2 {
+        margin-top: 2.2em;
+        margin-bottom: 0.5em;
+        font-size: 1.5em;
+        letter-spacing: -0.005em;
+      }
+      p { max-width: 760px; }
+      p.lead { font-size: 1.08em; max-width: 760px; }
+      code, pre {
+        font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      }
+      p code, li code {
+        background: var(--code-bg);
+        padding: 0.12em 0.4em;
+        border-radius: 4px;
+        font-size: 0.92em;
+      }
+      pre {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 1em 1.2em;
+        overflow-x: auto;
+        font-size: 0.88em;
+        line-height: 1.5;
+        max-width: 760px;
+      }
+      .comparison {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.8em;
+        max-width: 760px;
+        margin: 1.2em 0;
+      }
+      .comparison .card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 0.9em 1.1em;
+      }
+      .comparison h3 {
+        margin: 0 0 0.25em;
+        font-size: 1em;
+        color: var(--accent);
+      }
+      .comparison p {
+        margin: 0;
+        font-size: 0.9em;
+        color: var(--muted);
+      }
+      .demo-section {
+        margin-top: 2.5em;
+      }
+      .demo-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        flex-wrap: wrap;
+        gap: 0.5em;
+        max-width: none;
+      }
+      .demo-header h2 { margin: 0; }
+      .demo-header .meta {
+        color: var(--muted);
+        font-size: 0.9em;
+      }
+      .demo-header .meta a { color: var(--accent); }
+      .demo-frame-wrap {
+        margin-top: 1em;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        overflow: hidden;
+        background: var(--card);
+        box-shadow: 0 4px 18px rgba(0, 0, 0, 0.05);
+      }
+      iframe {
+        display: block;
+        width: 100%;
+        border: 0;
+        background: var(--bg);
+      }
+      .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 1em;
+        max-width: 760px;
+        margin: 1em 0;
+      }
+      .stat-card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 0.9em 1em;
+      }
+      .stat-card .label {
+        font-size: 0.72em;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+      .stat-card .value {
+        font-size: 1.4em;
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+        margin-top: 0.15em;
+      }
+      ul { max-width: 760px; padding-left: 1.3em; }
+      li { margin-bottom: 0.35em; }
+      footer {
+        margin-top: 4em;
+        padding-top: 2em;
+        border-top: 1px solid var(--border);
+        color: var(--muted);
+        font-size: 0.9em;
+      }
+      footer a { color: var(--accent); }
+      @media (max-width: 700px) {
+        main { padding: 2em 1em 3em; }
+        h1 { font-size: 1.9em; }
+        .comparison, .stats-grid { grid-template-columns: 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>remjs</h1>
+        <p class="tagline">
+          Streaming JavaScript state serialization. Wrap a state tree in a
+          proxy, get a stream of structured ops, rebuild the same state
+          anywhere.
+        </p>
+        <div class="badges">
+          <a href="https://github.com/rlyshw/remjs">GitHub</a>
+          <a href="mirror.html">Open full demo ↗</a>
+        </div>
+      </header>
+
+      <p class="lead">
+        <strong>remjs</strong> is a tiny library (~500 LOC) for turning JS
+        state mutations into a transport-agnostic op stream. You wrap a plain
+        object with <code>createStateStream</code>; you mutate it normally;
+        every change gets emitted as a structured op batch. On the receiving
+        side, <code>applyOps</code> rebuilds identical state against a plain
+        object. There's no server, no framework, no schema — you pick the
+        wire.
+      </p>
+
+      <div class="comparison">
+        <div class="card">
+          <h3>remjs</h3>
+          <p>Streams JS execution state — objects, arrays, Maps, Sets, nested trees. The source-of-truth layer.</p>
+        </div>
+        <div class="card">
+          <h3>remdom</h3>
+          <p>Streams DOM mutation state — nodes, attributes, text. The rendered-output layer.</p>
+        </div>
+      </div>
+
+      <section class="demo-section">
+        <div class="demo-header">
+          <h2>Live demo: shuffleboard mirror</h2>
+          <div class="meta">
+            single 45 KB HTML file · no server ·
+            <a href="mirror.html" target="_blank" rel="noopener">open full screen ↗</a>
+          </div>
+        </div>
+
+        <p>
+          Two canvases. The left court owns the state. Click-and-drag from
+          the launcher to fire a puck — friction, wall bounces, and
+          puck-on-puck collisions run on the source only. Every mutation
+          flows as a <code>set</code> op through
+          <code>JSON.stringify → JSON.parse → applyOps</code> onto a plain
+          object that drives the right court. They stay byte-for-byte
+          identical, verified every tick. Pause with <kbd>space</kbd>, step
+          a frame with <kbd>→</kbd>, or enable "show state" to compare the
+          raw JSON side-by-side.
+        </p>
+
+        <div class="demo-frame-wrap">
+          <iframe
+            src="mirror.html"
+            title="remjs shuffleboard mirror demo"
+            height="1300"
+            loading="lazy"
+          ></iframe>
+        </div>
+      </section>
+
+      <h2>Usage</h2>
+      <pre><code>import { createStateStream, applyOps, decode } from 'remjs';
+
+// Sender: wrap a plain state object
+const { state, snapshot } = createStateStream(
+  { count: 0, todos: [], user: { name: 'Alice' } },
+  {
+    onOps: (ops) =&gt; ws.send(JSON.stringify(ops)),
+    batch: 'microtask',
+  },
+);
+
+// Mutate normally — ops are emitted automatically
+state.count++;
+state.todos.push('buy milk');
+state.user.name = 'Bob';
+
+// Receiver: start from a snapshot, apply incoming batches
+let mirror = decode(snapshot().value);
+ws.onmessage = (ev) =&gt; {
+  mirror = applyOps(mirror, JSON.parse(ev.data));
+};</code></pre>
+
+      <h2>What ops look like</h2>
+      <pre><code>{ "type": "set",    "path": ["count"],        "value": 1 }
+{ "type": "set",    "path": ["user", "name"], "value": "Bob" }
+{ "type": "delete", "path": ["todos", "0"] }
+{ "type": "mapSet", "path": ["cache"], "key": "k", "value": 42 }</code></pre>
+
+      <p>
+        Plus <code>mapDelete</code>, <code>mapClear</code>,
+        <code>setAdd</code>, <code>setDelete</code>, <code>setClear</code>,
+        and <code>snapshot</code>. Values that JSON can't express —
+        <code>undefined</code>, <code>NaN</code>, <code>Date</code>,
+        <code>BigInt</code>, <code>Map</code>, <code>Set</code>,
+        <code>RegExp</code> — are tagged with a reserved
+        <code>__remjs</code> key at encode time and restored on decode.
+      </p>
+
+      <h2>Performance</h2>
+      <p>
+        Headless benchmark: 250 rigid-body physics bodies, 4 field updates
+        per body per frame, full JSON serialize/parse round-trip.
+      </p>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="label">ops / sec</div>
+          <div class="value">~990,000</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">frame rate cap</div>
+          <div class="value">~989 fps</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">wire bytes / sec</div>
+          <div class="value">67 MB/s</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">bytes / op</div>
+          <div class="value">~70</div>
+        </div>
+      </div>
+
+      <h2>Transports</h2>
+      <p>
+        remjs has no built-in transport — <code>onOps</code> hands you a
+        batch and it's your job to ship it. Reasonable options:
+      </p>
+      <ul>
+        <li><strong>WebSocket</strong> — multi-client sync</li>
+        <li><strong>postMessage</strong> — to a Worker or iframe</li>
+        <li><strong>BroadcastChannel</strong> — peer-to-peer between tabs, no server</li>
+        <li><strong>WebRTC data channel</strong> — peer-to-peer across machines</li>
+        <li><strong>A local <code>applyOps</code> call</strong> — in-page mirroring (the shuffleboard above works this way — its entire "transport" is a function call)</li>
+        <li><strong>A log file</strong> — for record/replay debugging</li>
+      </ul>
+
+      <h2>Scope</h2>
+      <ul>
+        <li>Captures mutations on objects, arrays, Maps, Sets, and nested trees.</li>
+        <li>Does <strong>not</strong> capture closures, local variables, or primitives — use a build-time source transform for those.</li>
+        <li>Applies ops in order. Concurrent multi-writer scenarios need a CRDT/OT layer above remjs.</li>
+        <li>The receiver trusts the op stream; there's no schema enforcement.</li>
+      </ul>
+
+      <footer>
+        <p>
+          Source: <a href="https://github.com/rlyshw/remjs">github.com/rlyshw/remjs</a> ·
+          MIT licensed ·
+          Full demo: <a href="mirror.html">mirror.html</a>
+        </p>
+      </footer>
+    </main>
+  </body>
+</html>

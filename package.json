@@ -1,0 +1,34 @@
+{
+  "name": "remjs",
+  "version": "0.1.0",
+  "description": "Streaming JavaScript state serialization — encode JS heap deltas as structured ops",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc && node scripts/build-mirror.mjs",
+    "build:mirror": "node scripts/build-mirror.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "example:counter": "node examples/counter/server.js",
+    "example:todo": "node examples/todo/server.js",
+    "example:dashboard": "node examples/dashboard/server.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

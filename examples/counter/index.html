@@ -1,0 +1,56 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>remjs — shared counter</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        max-width: 480px;
+        margin: 4em auto;
+        padding: 0 1em;
+        color: #222;
+      }
+      h1 { margin-bottom: 0.2em; }
+      .hint { color: #888; margin-top: 0; }
+      .count {
+        font-size: 6em;
+        text-align: center;
+        font-variant-numeric: tabular-nums;
+        margin: 0.2em 0;
+      }
+      .buttons { display: flex; gap: 0.5em; justify-content: center; }
+      button {
+        font-size: 1.5em;
+        padding: 0.3em 1em;
+        cursor: pointer;
+        border: 1px solid #aaa;
+        background: #f5f5f5;
+        border-radius: 6px;
+      }
+      button:hover { background: #eee; }
+      .history {
+        margin-top: 2em;
+        max-height: 200px;
+        overflow-y: auto;
+        border-top: 1px solid #eee;
+        padding-top: 1em;
+        font-family: ui-monospace, monospace;
+        font-size: 0.85em;
+        color: #666;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>remjs shared counter</h1>
+    <p class="hint">Open this page in multiple tabs. Mutations propagate live.</p>
+    <div class="count" id="count">—</div>
+    <div class="buttons">
+      <button id="dec">−</button>
+      <button id="reset">reset</button>
+      <button id="inc">+</button>
+    </div>
+    <div class="history" id="history"></div>
+    <script type="module" src="./client.js"></script>
+  </body>
+</html>
