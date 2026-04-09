@@ -172,7 +172,6 @@
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 8px;
-      min-height: 220px;
       text-align: left;
     }
 
@@ -184,6 +183,13 @@
       padding: 0.75rem 0;
       position: relative;
       overflow: hidden;
+      /* Reserve space for the max visible state of the cycle:
+         4 static lines + 3 dynamic todo items + the "source" / "mirror"
+         label + the inner padding. Locked in em so it scales with the
+         pane font-size on mobile. Without this fixed height the panes
+         (and the surrounding page) shift up and down each time an item
+         adds or removes. */
+      height: 16em;
     }
 
     .anim-source { color: var(--accent); }
@@ -722,7 +728,6 @@
         grid-template-columns: 1fr;
         gap: 0.5rem;
         padding: 0.75rem 1rem;
-        min-height: auto;
       }
       .anim-particles { height: 40px; }
       .anim-mirror { text-align: left; }
