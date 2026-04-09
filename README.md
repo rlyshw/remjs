@@ -18,6 +18,21 @@ in a proxied source state; every mutation flows as a JSON op batch to
 a separate plain object that drives a second canvas. They stay byte-for-byte
 identical, verified every tick.
 
+## Documentation
+
+- [`docs/USAGE.md`](docs/USAGE.md) — practical guide. Install, the four
+  batching modes, snapshot/dispose/flush, special types, edge cases,
+  integration patterns for React/WebSocket/BroadcastChannel/replay.
+- [`docs/WIRE_FORMAT.md`](docs/WIRE_FORMAT.md) — full op protocol
+  reference. Every op type with its JSON shape, the `__remjs` tag
+  scheme for non-JSON-safe values, ordering and trust model, an
+  example session, notes for non-JS receivers.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — internal design.
+  Why Proxy over the alternatives, why Map/Set need per-method
+  wrapping, the proxy cache and its single caveat, the codec, the
+  receiver, performance notes, and what would change if remjs grew
+  toward "the entire JS heap".
+
 ## The idea
 
 V8's `v8.serialize()` / `v8.deserialize()` can snapshot structured-cloneable
