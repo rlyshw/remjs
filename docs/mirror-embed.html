@@ -27,10 +27,16 @@
         flex-direction: column;
         gap: 0.7rem;
       }
-      .label-row {
+      .panes {
         display: grid;
         grid-template-columns: 1fr 1fr;
         gap: 1rem;
+      }
+      .pane {
+        display: flex;
+        flex-direction: column;
+        gap: 0.45rem;
+        min-width: 0;
       }
       .label {
         font-family: var(--font-mono);
@@ -58,11 +64,6 @@
         box-shadow: 0 0 0 5px rgba(63, 185, 80, 0.35);
         transform: scale(1.2);
       }
-      .panes {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 1rem;
-      }
       canvas {
         display: block;
         width: 100%;
@@ -84,22 +85,32 @@
       .footnote .sep { margin: 0 0.4rem; color: var(--border); }
       .footnote .ok { color: var(--green); }
       .footnote .bad { color: #f85149; }
+
+      /* Mobile / narrow iframes: stack the two courts vertically.
+         Side-by-side at half-width crushes each canvas to <180px,
+         which makes the pucks unreadable and the click target tiny. */
+      @media (max-width: 540px) {
+        body { padding: 0.7rem 0.85rem; gap: 0.55rem; }
+        .panes { grid-template-columns: 1fr; gap: 0.85rem; }
+      }
     </style>
   </head>
   <body>
-    <div class="label-row">
-      <div class="label">
-        <span class="side-source">source — your court</span>
-        <span class="pulse" id="pulseSource"></span>
-      </div>
-      <div class="label">
-        <span class="side-mirror">mirror — rebuilt from op stream</span>
-        <span class="pulse" id="pulseMirror"></span>
-      </div>
-    </div>
     <div class="panes">
-      <canvas id="source" width="520" height="400"></canvas>
-      <canvas id="mirror" width="520" height="400"></canvas>
+      <div class="pane">
+        <div class="label">
+          <span class="side-source">source — your court</span>
+          <span class="pulse" id="pulseSource"></span>
+        </div>
+        <canvas id="source" width="520" height="400"></canvas>
+      </div>
+      <div class="pane">
+        <div class="label">
+          <span class="side-mirror">mirror — rebuilt from op stream</span>
+          <span class="pulse" id="pulseMirror"></span>
+        </div>
+        <canvas id="mirror" width="520" height="400"></canvas>
+      </div>
     </div>
     <div class="footnote">
       <span id="hint">click &amp; drag from the triangle to fire a puck</span>

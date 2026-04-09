@@ -715,7 +715,9 @@
       .hero h1 { font-size: 2.2rem; }
       .tagline { font-size: 1.05rem; }
       section { padding: 2.5rem 0; }
-      .demo-frame { height: 660px; }
+      /* Embed switches to stacked canvases below 540px wide; the
+         iframe needs to be roughly 2× the desktop height to fit. */
+      .demo-frame { height: 720px; }
       .hero-anim {
         grid-template-columns: 1fr;
         gap: 0.5rem;
