@@ -5,6 +5,117 @@ on the receiver. For the wire-level reference see
 [`WIRE_FORMAT.md`](./WIRE_FORMAT.md). For internal design see
 [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
+## v0.2: `createObserver` is the primary primitive
+
+v0.2 introduced `createObserver`, the JS analog of remdom's
+`createObserver`. It supports multiple tracked roots, ref-based
+addressing for graph state with cycles and shared references, and the
+snapshot-on-connect contract. The v0.1 `createStateStream` API still
+works as a thin compatibility shim, but new code should prefer
+`createObserver` directly.
+
+### Quick start
+
+```ts
+import { createObserver, createReceiver } from "remjs";
+
+// ── source side ──────────────────────────────────────────────
+const observer = createObserver({
+  onOps: (ops) => ws.send(JSON.stringify(ops)),
+  batchMode: "microtask",
+});
+
+const state = observer.track({
+  count: 0,
+  todos: [],
+  user: { name: "Alice" },
+});
+
+state.count++;
+state.user.name = "Bob";
+state.todos.push({ text: "buy milk", done: false });
+
+// ── receiver side ────────────────────────────────────────────
+const receiver = createReceiver();
+
+ws.onmessage = (ev) => {
+  const msg = JSON.parse(ev.data);
+  receiver.apply(Array.isArray(msg) ? msg : [msg]);
+  render(receiver.state);
+};
+```
+
+### Multiple tracked roots
+
+`createObserver` lets you track several disjoint state trees in one
+observer. They share a registry, so cross-references between them
+preserve identity:
+
+```ts
+const observer = createObserver({ onOps });
+const userStore = observer.track({ users: [] });
+const settings = observer.track({ theme: "dark" });
+// Both flow through the same op stream / share the same id space.
+```
+
+### Bidirectional sync (sharing a registry)
+
+For two-way mirroring (clients pushing mutations back to a server), have
+both sides share a registry between their observer and receiver:
+
+```ts
+const receiver = createReceiver();
+receiver.apply([snapshotFromServer]);
+
+const observer = createObserver({
+  onOps: (ops) => ws.send(JSON.stringify(ops)),
+  registry: receiver.registry,    // ← share id space with the receiver
+});
+const state = observer.track(receiver.state);
+
+// Outgoing: state.foo = 1 → observer emits an op → ws.send → server applies it
+// Incoming: ws.onmessage → receiver.apply(ops) → mutates raw objects via
+//           the shared registry, no echo through the proxy traps
+```
+
+This is the pattern the example demos (`counter`, `todo`, `dashboard`)
+use. See `examples/_shared/client.js` and `examples/_shared/session.js`
+for the full plumbing.
+
+### Lifecycle
+
+```ts
+observer.snapshot();   // graph-shaped snapshot of every tracked object
+observer.flush();      // drain pending batched ops to onOps immediately
+observer.destroy();    // stop emitting further ops
+```
+
+### Compatibility shim: `createStateStream`
+
+v0.1's `createStateStream` is still exported as a thin wrapper around
+`createObserver`. Existing code keeps working unchanged:
+
+```ts
+import { createStateStream } from "remjs";
+
+const { state, snapshot, flush, dispose } = createStateStream(
+  { count: 0 },
+  { onOps, batch: "microtask" },
+);
+state.count++;
+```
+
+The op shape on the wire IS different from v0.1 (refs, not paths), so
+any code that asserted on op shapes needs updating. See
+[`CHANGELOG.md`](../CHANGELOG.md) for migration notes.
+
+---
+
+The rest of this document still describes the v0.1 API and remains
+accurate for the compatibility shim. Use it as a reference for the
+features that v0.2 inherits unchanged (batching modes, special types,
+edge cases, integration patterns).
+
 ## Install
 
 ```bash

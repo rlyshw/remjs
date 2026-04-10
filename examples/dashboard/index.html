@@ -3,14 +3,11 @@
   <head>
     <meta charset="utf-8" />
     <title>remjs — live dashboard</title>
+    <link rel="stylesheet" href="/_shared/inspector.css" />
     <style>
-      body {
+      .left {
         font-family: system-ui, sans-serif;
-        max-width: 900px;
-        margin: 2em auto;
-        padding: 0 1em;
-        color: #222;
-        background: #fafafa;
+        padding: 2em 1.5em;
       }
       h1 { margin-bottom: 0.2em; }
       .hint { color: #888; margin-top: 0; }
@@ -82,6 +79,8 @@
     </style>
   </head>
   <body>
+    <div class="split">
+    <div class="left">
     <h1>remjs live dashboard</h1>
     <p class="hint">
       Server owns the state. Every metric change streams to every connected
@@ -111,6 +110,10 @@
     </div>
 
     <div class="meta" id="meta"></div>
+    </div><!-- /.left -->
+
+    <div class="right" id="inspector"></div>
+    </div><!-- /.split -->
 
     <script type="module" src="./client.js"></script>
   </body>

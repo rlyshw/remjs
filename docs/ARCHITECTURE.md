@@ -4,6 +4,127 @@ This document is for people who want to understand or modify the
 library's internals. For usage see [`USAGE.md`](./USAGE.md). For the
 wire format see [`WIRE_FORMAT.md`](./WIRE_FORMAT.md).
 
+## v0.2 redesign — what translated from remdom and what didn't
+
+remjs v0.2 follows remdom's architectural conventions where they apply
+to the streaming-mirror problem in general, and deliberately diverges
+where remdom's shape is dictated by properties of the DOM specifically.
+
+### What translates 1:1 from remdom
+
+- **Registry pattern.** `NodeRegistry` (DOM nodes ↔ stable string ids,
+  WeakMap + Map pair, idempotent assignment) maps directly onto
+  `ObjectRegistry` (JS objects ↔ stable string ids).
+- **Discriminated-union op envelope.** remdom's `MutationOp` and
+  `InputOp` are tagged unions that the receiver dispatches on by
+  `op.type`. remjs's `Op` is the same shape.
+- **`onOps` callback contract** with `batchMode: "raf" | "microtask" |
+  "sync"`. Lifted directly.
+- **Snapshot-on-connect contract.** Every observer must implement
+  `snapshot()`. New receivers always start by applying a snapshot, then
+  live ops. This is the architectural payoff that eliminates a whole
+  class of "send X on connect" protocol patches.
+- **Lifecycle methods**: `snapshot()`, `destroy()`. Same names, same
+  semantics.
+- **Transport agnosticism.** The library hands you ops via `onOps`; the
+  consumer ships them somewhere. No sockets, no auth, no framing.
+
+### What does NOT translate (because it's DOM-specific)
+
+- **`root: Node` parameter, defaulting to `document.documentElement`.**
+  DOM has a single canonical entry point. JS state has none — modules'
+  `let`/`const` declarations, closures, framework internals, and
+  third-party private state are all unreachable from `globalThis`.
+  remjs's `createObserver` therefore has **no `root` parameter**;
+  state to observe is added explicitly via `track(obj)`. Future
+  capture mechanisms (`observeGlobal()`, `hookFramework("react")`,
+  etc.) will live as additional methods on the same observer.
+- **Single observation mechanism (`MutationObserver`).** The browser
+  hands DOM observation for free. JS has no equivalent — every capture
+  mechanism (Proxy, framework hook, constructor patch, global proxy,
+  build-time transform) is a separate piece of work. The remjs
+  observer is therefore **plural** in its capture mechanisms by
+  design, even though v0.2 only ships one (`track`).
+- **Anchor-based insertion (`beforeId`).** DOM cares about sibling
+  order at every level; JS arrays use indices, not sibling anchors.
+  Forcing `beforeId` ops on JS state would be invented complexity.
+- **`SerializedNode` with `type: 1|3|8` discriminator.** DOM has a
+  small fixed set of node types. JS has Object/Array/Map/Set/Date/
+  RegExp/BigInt — wider, and the codec already handles them via the
+  `__remjs` tagged-value scheme.
+- **`PropertyOp` distinction (.value, .checked, .selectedIndex).**
+  DOM exposes some "live" properties that bypass MutationObserver. JS
+  doesn't have this distinction.
+- **`DomApplier` bound to a single container `HTMLElement`.** The
+  remjs receiver is a graph holder, not an element mutator. Mutations
+  apply directly to objects looked up via the registry, not to a
+  fixed container.
+
+### The new primitive
+
+```ts
+function createObserver(options?: {
+  onOps?: (ops: Op[]) => void;
+  registry?: ObjectRegistry;
+  batchMode?: "sync" | "microtask" | "raf" | number;
+  resyncInterval?: number;
+}): {
+  track<T extends object>(obj: T): T;
+  snapshot(): SnapshotOp;
+  flush(): void;
+  destroy(): void;
+  registry: ObjectRegistry;
+}
+```
+
+`createStateStream` is now a thin shim around this:
+
+```ts
+function createStateStream(initial, options) {
+  const observer = createObserver(options);
+  const state = observer.track(initial);
+  return { state, snapshot: observer.snapshot, flush: observer.flush, dispose: observer.destroy };
+}
+```
+
+### Capture-scope roadmap
+
+| Level | Mechanism | Captures | When |
+| --- | --- | --- | --- |
+| L0 | v0.1 `createStateStream(obj)` | the wrapped object | shipped |
+| L0.5 | v0.2 `createObserver().track(obj)` | one or more explicitly tracked objects, with refs | shipped |
+| L1 | Framework hooks (React, Zustand, Redux, Vue, Pinia) | framework store state, no app opt-in | v0.3+ |
+| L2 | Constructor patches + global proxy | every reachable object created after install | v0.4+ |
+| L3 | Build/load-time script transform | locals, closures, primitives — anything | future, via rembrowser |
+
+The eventual ambition is L3 — wide enough that the receiver, running
+the same JS code, naturally produces the same DOM, making remdom
+unnecessary. v0.2 establishes the protocol shape and primitive that
+L1/L2/L3 will extend without breaking the wire format.
+
+### Why ref-based addressing
+
+v0.1 used path-based addressing (`["user", "name"]`). It worked for
+trees with stable structure but broke for:
+- **Graphs** where the same object lives at multiple paths
+- **Cycles** where the encoder would recurse infinitely
+- **Moves** where a reparented object would no longer be at its
+  original path
+- **Multi-root tracking** where there's no single canonical root path
+
+The v0.2 fix: each tracked object gets a stable id from a registry.
+Ops carry `target: { kind: "ref", id, prop }` instead of (or in
+addition to) paths. The receiver maintains its own registry that
+mirrors the source's id space — populated by snapshot-on-connect
+and by `__remjs: "newobj"` tags that introduce new objects mid-stream.
+
+Path addressing is still in the protocol (`{ kind: "path", path }`)
+because some sources may want it for tree-shaped state, and the v0.1
+receiver normalizes legacy ops by wrapping their `path` field into
+this form.
+
+---
+
 ## Source layout
 
 ```

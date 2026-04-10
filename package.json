@@ -16,7 +16,6 @@
     "build:mirror": "node scripts/build-mirror.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "example:counter": "node examples/counter/server.js",
     "example:todo": "node examples/todo/server.js",
     "example:dashboard": "node examples/dashboard/server.js"
   },

@@ -1,4 +1,7 @@
 import { connect } from "/_shared/client.js";
+import { createInspector } from "/_shared/inspector.js";
+
+const inspector = createInspector(document.getElementById("inspector"));
 
 const $list = document.getElementById("list");
 const $stats = document.getElementById("stats");
@@ -42,7 +45,10 @@ function escapeHtml(s) {
   );
 }
 
-connect({ onChange: render }).then(({ state }) => {
+connect({
+  onChange: render,
+  onMessage: (msg) => inspector.onMessage(msg),
+}).then(({ state }) => {
   $form.addEventListener("submit", (e) => {
     e.preventDefault();
     const text = $input.value.trim();

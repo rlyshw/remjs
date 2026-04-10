@@ -72,7 +72,7 @@ setInterval(() => {
       if (live.events.length > 20) live.events.shift();
     }
   }
-}, 500);
+}, 1500);
 
 const PORT = 7403;
 server.listen(PORT, () => {

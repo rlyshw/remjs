@@ -123,40 +123,251 @@
 "use strict";
 /* ---------- proxy-symbol.js ---------- */
 /**
- * Internal symbol to pull the raw target out of a remjs proxy.
+ * Internal symbols shared across the remjs runtime.
  *
- * Split into its own module to avoid a circular import between proxy.ts
- * and codec.ts — codec needs to unwrap proxies while encoding, and
- * proxy.ts needs to call encode while emitting ops.
+ * Split into their own module to avoid a circular import between
+ * proxy.ts, codec.ts, and registry.ts — each needs to refer to these
+ * symbols but they all import from each other in various combinations.
+ *
+ * - `RAW` pulls the raw target out of a remjs proxy.
+ * - `ID` is the registry-assigned object id, stored as a non-enumerable
+ *   property on tracked objects so reads are O(1) and the id survives
+ *   garbage collection of the registry's WeakMap entry. The WeakMap is
+ *   still the source of truth for frozen objects (which can't be tagged).
  */
 const RAW = Symbol.for("remjs.raw");
+const ID = Symbol.for("remjs.id");
 
 /* ---------- ops.js ---------- */
 /**
  * Op protocol for remjs.
  *
- * An Op describes a single mutation to a JS state tree. The tx side emits ops
- * as mutations occur; the rx side applies them to reconstruct identical state.
+ * An Op describes a single mutation to a JS state graph. The source side
+ * (a `JsObserver` from `observer.ts`, or a legacy `createStateStream`)
+ * emits ops as mutations occur; the receiver applies them to reconstruct
+ * identical state.
  *
- * Paths are arrays of string keys. Array indices are encoded as their string
- * form ("0", "1", ...) since that matches JS property semantics on arrays.
+ * v0.2 introduces ref-based addressing alongside path-based addressing.
+ * Each op carries a `target` discriminated union: either a `path` (an
+ * array of string keys walked from a single root, the v0.1 model) or a
+ * `ref` (a stable object id from an `ObjectRegistry`, allowing graph
+ * state with shared references and cycles).
+ *
+ * The wire format also gains a new tagged value type, `{ __remjs: "ref" }`,
+ * which the encoder emits whenever a value is itself a ref-tracked object.
+ * The decoder turns it into a placeholder that gets resolved during the
+ * second pass of graph snapshot reconstruction.
+ *
+ * Backward compatibility: ops without a `target` field are accepted by the
+ * receiver and rewritten on the fly to `target: { kind: "path", path }`,
+ * so v0.1 op streams continue to apply cleanly.
  */
 /** Tag used to mark encoded special values that can't be represented as plain JSON. */
 const TAG = "__remjs";
+/**
+ * Normalize a legacy v0.1 op (with top-level `path`) into the v0.2
+ * shape (with `target: { kind: "path", path }`). Returns the input
+ * unchanged if it already has a `target` field.
+ *
+ * The receiver runs every incoming op through this so a v0.1 sender
+ * can talk to a v0.2 receiver without any sender-side changes.
+ */
+function normalizeLegacyOp(op) {
+    if ("target" in op && op.target)
+        return op;
+    if (op.type === "snapshot")
+        return op;
+    const legacy = op;
+    if (!legacy.path) {
+        // No target, no path — only valid for snapshot, which we already returned.
+        return op;
+    }
+    return { ...op, target: { kind: "path", path: legacy.path } };
+}
+
+/* ---------- registry.js ---------- */
+/**
+ * Object registry — stable id management for tracked JS objects.
+ *
+ * The JS-state analog of remdom's `NodeRegistry`. Assigns a UUID to each
+ * tracked object on first observation, exposes bidirectional lookup
+ * (`obj → id`, `id → obj`), and walks an object graph to assign ids
+ * recursively (used at `track()` time and at `snapshot()` time).
+ *
+ * Storage is dual:
+ *   - A `WeakMap<object, string>` for the live `obj → id` lookup. This
+ *     survives garbage collection automatically and works for frozen
+ *     objects.
+ *   - A `Map<string, WeakRef<object>>` for the `id → obj` lookup. The
+ *     WeakRef lets the object be garbage-collected even though the id
+ *     stays in the map. Stale entries are pruned lazily by
+ *     `getObjectById` and `entries`.
+ *
+ * Leaf types (Date, RegExp, BigInt, primitives) are not tracked — they're
+ * encoded by value, never by reference.
+ */
+
+/** If `obj` is a remjs proxy, return the raw target underneath; otherwise
+ *  return `obj` unchanged. The registry uses the raw target as the key
+ *  in its WeakMap so passing in a proxy works transparently. */
+function unwrapForLookup(obj) {
+    const raw = obj[RAW];
+    return raw === undefined || raw === null ? obj : raw;
+}
+/** Generate a fresh id. Uses crypto.randomUUID where available, falls
+ *  back to a Math.random hex string elsewhere. Matches remdom's format. */
+function generateId() {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+        return crypto.randomUUID();
+    }
+    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+        const r = (Math.random() * 16) | 0;
+        return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+    });
+}
+/** True for objects that should be tracked by reference (and thus get
+ *  an id). Leaf types are encoded by value and don't get ids. */
+function isTrackable(v) {
+    if (v === null || typeof v !== "object")
+        return false;
+    if (v instanceof Date)
+        return false;
+    if (v instanceof RegExp)
+        return false;
+    return true;
+}
+function createObjectRegistry() {
+    const objToId = new WeakMap();
+    const idToRef = new Map();
+    function assignId(obj) {
+        const target = unwrapForLookup(obj);
+        const cached = objToId.get(target);
+        if (cached)
+            return cached;
+        const id = generateId();
+        objToId.set(target, id);
+        idToRef.set(id, new WeakRef(target));
+        return id;
+    }
+    function adopt(obj, id) {
+        const target = unwrapForLookup(obj);
+        const existing = objToId.get(target);
+        if (existing) {
+            if (existing !== id) {
+                throw new Error(`remjs: cannot adopt id ${id} for object that already has id ${existing}`);
+            }
+            return;
+        }
+        objToId.set(target, id);
+        idToRef.set(id, new WeakRef(target));
+    }
+    function getIdOf(obj) {
+        return objToId.get(unwrapForLookup(obj)) ?? null;
+    }
+    function getObjectById(id) {
+        const ref = idToRef.get(id);
+        if (!ref)
+            return null;
+        const obj = ref.deref();
+        if (!obj) {
+            idToRef.delete(id);
+            return null;
+        }
+        return obj;
+    }
+    function walkAndAssign(root) {
+        if (!isTrackable(root))
+            return;
+        const seen = new WeakSet();
+        const stack = [root];
+        while (stack.length > 0) {
+            const obj = stack.pop();
+            if (seen.has(obj))
+                continue;
+            seen.add(obj);
+            assignId(obj);
+            if (obj instanceof Map) {
+                for (const [k, v] of obj) {
+                    if (isTrackable(k))
+                        stack.push(k);
+                    if (isTrackable(v))
+                        stack.push(v);
+                }
+                continue;
+            }
+            if (obj instanceof Set) {
+                for (const v of obj) {
+                    if (isTrackable(v))
+                        stack.push(v);
+                }
+                continue;
+            }
+            if (Array.isArray(obj)) {
+                for (let i = 0; i < obj.length; i++) {
+                    const v = obj[i];
+                    if (isTrackable(v))
+                        stack.push(v);
+                }
+                continue;
+            }
+            // Plain object — walk its own enumerable string keys. Symbol-keyed
+            // properties (including our own ID symbol) are intentionally skipped.
+            for (const k of Object.keys(obj)) {
+                const v = obj[k];
+                if (isTrackable(v))
+                    stack.push(v);
+            }
+        }
+    }
+    function* entries() {
+        for (const [id, ref] of idToRef) {
+            const obj = ref.deref();
+            if (obj) {
+                yield [id, obj];
+            }
+            else {
+                idToRef.delete(id);
+            }
+        }
+    }
+    function clear() {
+        idToRef.clear();
+        // The WeakMap can't be cleared directly; it'll GC naturally as
+        // references die. The next assignId on a previously-tracked object
+        // will see no entry and assign a fresh id.
+    }
+    return { assignId, adopt, getIdOf, getObjectById, walkAndAssign, entries, clear };
+}
 
 /* ---------- codec.js ---------- */
 /**
  * Value encoding/decoding.
  *
- * `encode` turns an arbitrary JS value into a JSON-safe EncodedValue,
+ * `encode` turns an arbitrary JS value into a JSON-safe `EncodedValue`,
  * handling all the built-in types that plain JSON can't express.
  * `decode` is the inverse.
  *
- * Plain objects and arrays are encoded recursively. Special types
- * (undefined, Date, Map, Set, RegExp, BigInt, NaN, ±Infinity) are
- * wrapped in an object with a reserved `__remjs` tag key.
+ * v0.2 adds **ref encoding**. When the encoder is given an `EncodeOptions`
+ * with a `refOf(obj)` callback, any tracked object encountered during
+ * the walk (other than the top-level value itself) is emitted as
+ * `{ __remjs: "ref", id }` rather than recursively encoded. The decoder
+ * with a matching `resolveRef(id)` callback patches refs back to live
+ * objects on the receiver side. This is what makes graph state with
+ * shared references and cycles round-trip cleanly.
  *
- * Circular references are not supported in the initial version.
+ * Encoding rules:
+ *   - Plain objects and arrays recurse normally.
+ *   - Special types (undefined, Date, Map, Set, RegExp, BigInt, NaN,
+ *     ±Infinity) are wrapped with the reserved `__remjs` tag key.
+ *   - Tracked objects (per `refOf`) are encoded as `{ __remjs: "ref", id }`
+ *     when they appear nested inside another value. The top-level value
+ *     itself is always encoded by content — that's how a snapshot entry
+ *     describes the object the entry is FOR rather than describing a ref
+ *     to it.
+ *
+ * Backward compat: when called without `refOf`, the encoder behaves
+ * identically to the v0.1 codec. The four current demos use this path
+ * via the `createStateStream` alias.
  */
 
 
@@ -170,7 +381,32 @@ function unwrapRaw(v) {
     }
     return v;
 }
-function encode(value) {
+/**
+ * Encode a value for transmission. Default "value" mode treats trackable
+ * objects as references — a new object becomes a `newobj` tag, an existing
+ * tracked one becomes a `ref` tag. Nested values inside any encoded
+ * structure are also encoded in value mode, so a deeply-nested new object
+ * also gets its own newobj tag.
+ *
+ * Used by ops (`op.value`, `op.key`) where the value being transmitted
+ * may be a new object that needs to be introduced into the receiver's
+ * registry.
+ */
+function encode(value, opts = {}) {
+    return encodeInner(value, opts, "value");
+}
+/**
+ * Encode a tracked object's CONTENTS (its own fields/items), not as a
+ * ref to itself. Nested tracked objects inside the contents are still
+ * encoded in value mode (so they appear as ref tags in the output).
+ *
+ * Used by the snapshot builder, where each entry's `encoded` field
+ * describes the object the entry is FOR rather than referring to it.
+ */
+function encodeContents(value, opts = {}) {
+    return encodeInner(value, opts, "content");
+}
+function encodeInner(value, opts, mode) {
     const v = unwrapRaw(value);
     if (v === null)
         return null;
@@ -195,38 +431,69 @@ function encode(value) {
         return { [TAG]: "date", v: v.getTime() };
     if (v instanceof RegExp)
         return { [TAG]: "regex", src: v.source, flags: v.flags };
+    // Ref / newobj encoding (only in "value" mode — "content" mode skips
+    // straight to the structural walk so the top-level object is described
+    // by its fields rather than wrapped in a tag).
+    if (mode === "value" && t === "object" && v !== null) {
+        if (opts.refOf) {
+            const id = opts.refOf(v);
+            if (id !== null) {
+                return { [TAG]: "ref", id };
+            }
+        }
+        if (opts.assignId) {
+            const id = opts.assignId(v);
+            const kind = v instanceof Map
+                ? "map"
+                : v instanceof Set
+                    ? "set"
+                    : Array.isArray(v)
+                        ? "array"
+                        : "object";
+            return {
+                [TAG]: "newobj",
+                id,
+                kind,
+                contents: encodeInner(v, opts, "content"),
+            };
+        }
+    }
+    // Structural walk (used for "content" mode and as a fallback when no
+    // ref/newobj options are provided). Nested values are encoded in
+    // "value" mode so deeply-nested new objects get their own tags.
     if (v instanceof Map) {
         const entries = [];
         for (const [k, val] of v) {
-            entries.push([encode(k), encode(val)]);
+            entries.push([encodeInner(k, opts, "value"), encodeInner(val, opts, "value")]);
         }
         return { [TAG]: "map", entries };
     }
     if (v instanceof Set) {
         const values = [];
         for (const val of v)
-            values.push(encode(val));
+            values.push(encodeInner(val, opts, "value"));
         return { [TAG]: "set", values };
     }
-    if (Array.isArray(v))
-        return v.map(encode);
+    if (Array.isArray(v)) {
+        return v.map((item) => encodeInner(item, opts, "value"));
+    }
     if (t === "object") {
         const out = {};
         for (const k of Object.keys(v)) {
-            out[k] = encode(v[k]);
+            out[k] = encodeInner(v[k], opts, "value");
         }
         return out;
     }
     throw new Error(`remjs: cannot encode value of type ${t}`);
 }
-function decode(value) {
+function decode(value, opts = {}) {
     if (value === null)
         return null;
     const t = typeof value;
     if (t !== "object")
         return value;
     if (Array.isArray(value))
-        return value.map(decode);
+        return value.map((item) => decode(item, opts));
     if (isTagged(value)) {
         const tag = value[TAG];
         switch (tag) {
@@ -246,15 +513,76 @@ function decode(value) {
                 return new RegExp(value.src, value.flags);
             case "map": {
                 const m = new Map();
-                for (const [k, v] of value.entries)
-                    m.set(decode(k), decode(v));
+                for (const [k, v] of value.entries) {
+                    m.set(decode(k, opts), decode(v, opts));
+                }
                 return m;
             }
             case "set": {
                 const s = new Set();
-                for (const v of value.values)
-                    s.add(decode(v));
+                for (const v of value.values) {
+                    s.add(decode(v, opts));
+                }
                 return s;
+            }
+            case "ref": {
+                const id = value.id;
+                if (opts.resolveRef) {
+                    const resolved = opts.resolveRef(id);
+                    if (resolved !== null)
+                        return resolved;
+                }
+                // Resolver missing or didn't know this id — return a placeholder
+                // marker that the caller can detect and patch in a second pass.
+                return makeRefPlaceholder(id);
+            }
+            case "newobj": {
+                // Build the right shaped placeholder, register it with the
+                // supplied id, then hydrate it from the contents. Adopt-first
+                // means a self-referential newobj (object whose own contents
+                // contain a ref back to itself) resolves cleanly during the
+                // contents decode below.
+                const tagged = value;
+                let placeholder;
+                switch (tagged.kind) {
+                    case "array":
+                        placeholder = [];
+                        break;
+                    case "map":
+                        placeholder = new Map();
+                        break;
+                    case "set":
+                        placeholder = new Set();
+                        break;
+                    default:
+                        placeholder = {};
+                }
+                if (opts.adoptObject)
+                    opts.adoptObject(tagged.id, placeholder);
+                const decoded = decode(tagged.contents, opts);
+                // Copy decoded contents into the placeholder so the placeholder
+                // is the canonical instance (in case anything already holds a
+                // reference to it via the registry).
+                if (placeholder instanceof Map && decoded instanceof Map) {
+                    for (const [k, v] of decoded)
+                        placeholder.set(k, v);
+                }
+                else if (placeholder instanceof Set && decoded instanceof Set) {
+                    for (const v of decoded)
+                        placeholder.add(v);
+                }
+                else if (Array.isArray(placeholder) && Array.isArray(decoded)) {
+                    for (const item of decoded)
+                        placeholder.push(item);
+                }
+                else if (typeof decoded === "object" &&
+                    decoded !== null &&
+                    !Array.isArray(decoded)) {
+                    for (const k of Object.keys(decoded)) {
+                        placeholder[k] = decoded[k];
+                    }
+                }
+                return placeholder;
             }
             default:
                 throw new Error(`remjs: unknown tag ${tag}`);
@@ -262,25 +590,38 @@ function decode(value) {
     }
     const out = {};
     for (const k of Object.keys(value)) {
-        out[k] = decode(value[k]);
+        out[k] = decode(value[k], opts);
     }
     return out;
+}
+/* ── Ref placeholders ─────────────────────────────────────────────── */
+const REF_PLACEHOLDER = Symbol.for("remjs.ref-placeholder");
+function makeRefPlaceholder(id) {
+    return { [REF_PLACEHOLDER]: true, id };
+}
+function isRefPlaceholder(v) {
+    return (typeof v === "object" &&
+        v !== null &&
+        v[REF_PLACEHOLDER] === true);
+}
+function getRefPlaceholderId(v) {
+    return v.id;
 }
 
 /* ---------- proxy.js ---------- */
 /**
- * Deep proxy wrapping for state trees.
+ * Deep proxy wrapping for state objects and graphs.
  *
- * `wrap(target, path, emit)` returns a proxy over `target` that emits an Op
- * whenever the target is mutated. Nested objects/arrays/Maps/Sets returned
- * from reads are wrapped lazily with an extended path, so mutations through
- * any path in the tree are tracked.
+ * `wrap(target, registry, emit)` returns a proxy over `target` that
+ * emits an Op whenever the target is mutated. Nested objects returned
+ * from reads are wrapped lazily with the same registry and `emit`
+ * callback, so mutations through any path in the graph are tracked.
  *
- * Caching note: once a target is wrapped, the resulting proxy is cached. If
- * the same target is later placed at a different path in the tree, mutations
- * through the cached proxy will still be reported at its original path. Most
- * apps store each object at exactly one path so this is rarely an issue, but
- * it's a known limitation of the lightweight design.
+ * Each tracked object gets a stable id from the registry; emitted ops
+ * carry `target: { kind: "ref", id, prop }` so the receiver can mutate
+ * the exact object regardless of which path it was reached through.
+ * Shared references and cycles work because the registry assigns the
+ * same id to the same target on every walk.
  */
 
 
@@ -288,7 +629,6 @@ const proxyCache = new WeakMap();
 function isWrappable(v) {
     if (v === null || typeof v !== "object")
         return false;
-    // Leaf types — encoded as values, never mutated in place.
     if (v instanceof Date)
         return false;
     if (v instanceof RegExp)
@@ -301,26 +641,46 @@ function unwrap(v) {
     }
     return v;
 }
-function wrap(target, path, emit) {
+/** Encode helper bundle for the proxy. Emits refs for already-tracked
+ *  objects and newobj tags (with freshly-assigned ids) for new ones, so
+ *  the receiver can adopt every id this op introduces. */
+function makeEncodeOpts(registry) {
+    return {
+        refOf: (obj) => registry.getIdOf(obj),
+        assignId: (obj) => registry.assignId(obj),
+    };
+}
+/**
+ * Wrap a target object in a proxy that emits ops on mutation.
+ *
+ * @param target — the raw object to wrap (must not already be a proxy)
+ * @param registry — the ObjectRegistry that owns id assignment
+ * @param emit — callback that receives each op as it's produced
+ */
+function wrap(target, registry, emit) {
     if (!isWrappable(target))
         return target;
     const cached = proxyCache.get(target);
     if (cached)
         return cached;
+    // Assign an id eagerly so the registry knows about this object before
+    // any of its children are walked.
+    registry.assignId(target);
     let proxy;
     if (target instanceof Map) {
-        proxy = wrapMap(target, path, emit);
+        proxy = wrapMap(target, registry, emit);
     }
     else if (target instanceof Set) {
-        proxy = wrapSet(target, path, emit);
+        proxy = wrapSet(target, registry, emit);
     }
     else {
-        proxy = wrapObject(target, path, emit);
+        proxy = wrapObject(target, registry, emit);
     }
     proxyCache.set(target, proxy);
     return proxy;
 }
-function wrapObject(target, path, emit) {
+function wrapObject(target, registry, emit) {
+    const encodeOpts = makeEncodeOpts(registry);
     return new Proxy(target, {
         get(t, prop, receiver) {
             if (prop === RAW)
@@ -329,7 +689,7 @@ function wrapObject(target, path, emit) {
             if (typeof prop === "symbol")
                 return value;
             if (isWrappable(value)) {
-                return wrap(value, [...path, prop], emit);
+                return wrap(value, registry, emit);
             }
             return value;
         },
@@ -342,8 +702,8 @@ function wrapObject(target, path, emit) {
             if (result) {
                 emit({
                     type: "set",
-                    path: [...path, prop],
-                    value: encode(rawValue),
+                    target: makeChildTarget(target, prop, registry),
+                    value: encode(rawValue, encodeOpts),
                 });
             }
             return result;
@@ -353,13 +713,17 @@ function wrapObject(target, path, emit) {
                 return Reflect.deleteProperty(t, prop);
             const result = Reflect.deleteProperty(t, prop);
             if (result) {
-                emit({ type: "delete", path: [...path, prop] });
+                emit({
+                    type: "delete",
+                    target: makeChildTarget(target, prop, registry),
+                });
             }
             return result;
         },
     });
 }
-function wrapMap(target, path, emit) {
+function wrapMap(target, registry, emit) {
+    const encodeOpts = makeEncodeOpts(registry);
     const proxy = new Proxy(target, {
         get(t, prop) {
             if (prop === RAW)
@@ -371,9 +735,9 @@ function wrapMap(target, path, emit) {
                     t.set(rawK, rawV);
                     emit({
                         type: "mapSet",
-                        path,
-                        key: encode(rawK),
-                        value: encode(rawV),
+                        target: makeSelfTarget(target, registry),
+                        key: encode(rawK, encodeOpts),
+                        value: encode(rawV, encodeOpts),
                     });
                     return proxy;
                 };
@@ -383,7 +747,11 @@ function wrapMap(target, path, emit) {
                     const rawK = unwrap(k);
                     const existed = t.delete(rawK);
                     if (existed) {
-                        emit({ type: "mapDelete", path, key: encode(rawK) });
+                        emit({
+                            type: "mapDelete",
+                            target: makeSelfTarget(target, registry),
+                            key: encode(rawK, encodeOpts),
+                        });
                     }
                     return existed;
                 };
@@ -392,20 +760,21 @@ function wrapMap(target, path, emit) {
                 return () => {
                     if (t.size > 0) {
                         t.clear();
-                        emit({ type: "mapClear", path });
+                        emit({
+                            type: "mapClear",
+                            target: makeSelfTarget(target, registry),
+                        });
                     }
                 };
             }
-            // Everything else (get, has, size, keys, values, entries, forEach, @@iterator)
-            // reads from the raw target. Function results are bound to the raw target
-            // so internal slot access works.
             const val = Reflect.get(t, prop, t);
             return typeof val === "function" ? val.bind(t) : val;
         },
     });
     return proxy;
 }
-function wrapSet(target, path, emit) {
+function wrapSet(target, registry, emit) {
+    const encodeOpts = makeEncodeOpts(registry);
     const proxy = new Proxy(target, {
         get(t, prop) {
             if (prop === RAW)
@@ -415,7 +784,11 @@ function wrapSet(target, path, emit) {
                     const rawV = unwrap(v);
                     if (!t.has(rawV)) {
                         t.add(rawV);
-                        emit({ type: "setAdd", path, value: encode(rawV) });
+                        emit({
+                            type: "setAdd",
+                            target: makeSelfTarget(target, registry),
+                            value: encode(rawV, encodeOpts),
+                        });
                     }
                     return proxy;
                 };
@@ -425,7 +798,11 @@ function wrapSet(target, path, emit) {
                     const rawV = unwrap(v);
                     const existed = t.delete(rawV);
                     if (existed) {
-                        emit({ type: "setDelete", path, value: encode(rawV) });
+                        emit({
+                            type: "setDelete",
+                            target: makeSelfTarget(target, registry),
+                            value: encode(rawV, encodeOpts),
+                        });
                     }
                     return existed;
                 };
@@ -434,7 +811,10 @@ function wrapSet(target, path, emit) {
                 return () => {
                     if (t.size > 0) {
                         t.clear();
-                        emit({ type: "setClear", path });
+                        emit({
+                            type: "setClear",
+                            target: makeSelfTarget(target, registry),
+                        });
                     }
                 };
             }
@@ -444,17 +824,59 @@ function wrapSet(target, path, emit) {
     });
     return proxy;
 }
+/* ── Target construction ─────────────────────────────────────────── */
+/** Build the `target` field for an op that affects a property of `parent`. */
+function makeChildTarget(parent, prop, registry) {
+    return {
+        kind: "ref",
+        id: registry.assignId(parent),
+        prop,
+    };
+}
+/** Build the `target` field for an op that affects the wrapped object
+ *  itself (e.g. mapClear, setAdd — the target IS the Map/Set). */
+function makeSelfTarget(target, registry) {
+    return {
+        kind: "ref",
+        id: registry.assignId(target),
+    };
+}
 
 /* ---------- apply.js ---------- */
 /**
  * Receiver-side op application.
  *
- * `applyOp` / `applyOps` take a plain state tree (no proxies) and mutate it
- * in place to match the sender's state. A `snapshot` op replaces the root
- * entirely; all other ops walk to a target by path and mutate.
+ * `applyOp` / `applyOps` take a state graph and mutate it in place to
+ * match the sender's state. The receiver maintains its own
+ * `ObjectRegistry` that mirrors the source's id space — when an
+ * incoming op carries a ref-based target, the receiver looks up the
+ * id in its own registry to find the target object to mutate.
+ *
+ * v0.2 supports two op-target shapes:
+ *  - **Path** (`target.kind === "path"`): walk a path from the snapshot
+ *    root, mutate the leaf. v0.1 model. Used by the `createStateStream`
+ *    legacy alias and tree-shaped state.
+ *  - **Ref** (`target.kind === "ref"`): look up the target object by id
+ *    in the receiver's registry, mutate the named property. v0.2 model.
+ *    Used by `createObserver` and graph-shaped state.
+ *
+ * Snapshot ops come in two flavors:
+ *  - **Tree snapshot** (v0.1): a single encoded value at the root.
+ *    `decode`d directly and returned as the new root.
+ *  - **Graph snapshot** (v0.2): a flat list of `{id, encoded}` entries.
+ *    Two-pass reconstruction: phase 1 builds empty placeholder objects
+ *    of the right type and registers them by id; phase 2 fills in each
+ *    placeholder with decoded contents, with refs resolved against the
+ *    just-built registry.
+ *
+ * Backward compat: v0.1 ops with a top-level `path` field (no `target`)
+ * are normalized via `normalizeLegacyOp` before dispatch.
  */
 
-function walkTo(root, path) {
+
+
+/* ── Path resolution ──────────────────────────────────────────────── */
+function walkPath(root, path) {
     let current = root;
     for (const key of path) {
         if (current === null || current === undefined) {
@@ -464,155 +886,375 @@ function walkTo(root, path) {
     }
     return current;
 }
+/** Resolve a target to `{ parent, key }` for ops that mutate a property,
+ *  or `{ target, key: null }` for ops that mutate the target itself
+ *  (mapClear, setAdd, etc). */
+function resolveTarget(root, registry, target) {
+    if (target.kind === "path") {
+        if (target.path.length === 0) {
+            return { container: root, key: null };
+        }
+        const parentPath = target.path.slice(0, -1);
+        const key = target.path[target.path.length - 1];
+        const parent = walkPath(root, parentPath);
+        return { container: parent, key };
+    }
+    // Ref-based: look up the object by id in the receiver's registry.
+    const obj = registry.getObjectById(target.id);
+    if (!obj) {
+        throw new Error(`remjs: cannot resolve ref id ${target.id} — not in receiver registry. Did you miss a snapshot?`);
+    }
+    return { container: obj, key: target.prop ?? null };
+}
+/* ── Op application ───────────────────────────────────────────────── */
 /**
- * Apply a single op to `root`.
+ * Apply a single op to `root`. Returns the (possibly new) root.
  *
- * Returns the (possibly new) root. For most op types the root is mutated in
- * place and returned unchanged; for `snapshot` ops a brand-new root is
- * constructed and returned, so callers must always re-bind to the return
- * value.
+ * For most op types the root is mutated in place and returned unchanged.
+ * For `snapshot` ops a brand-new root is constructed and returned, so
+ * callers must always re-bind to the return value.
+ *
+ * The `registry` parameter is the receiver's own ObjectRegistry. It's
+ * populated by snapshot ops (which assign ids to reconstructed objects)
+ * and used by ref-target resolution. For pure path-addressed op streams
+ * (legacy v0.1) the registry is unused but must still be provided.
  */
-function applyOp(root, op) {
+function applyOp(root, op, registry) {
+    // Normalize legacy v0.1 ops (top-level `path`) into the v0.2 shape.
+    op = normalizeLegacyOp(op);
     switch (op.type) {
         case "snapshot":
-            return decode(op.value);
+            return applySnapshot(op, registry);
         case "set": {
-            if (op.path.length === 0) {
-                throw new Error("remjs: cannot apply set op with empty path — use snapshot instead");
+            const decodeOpts = makeDecodeOpts(registry);
+            const value = decode(op.value, decodeOpts);
+            const { container, key } = resolveTarget(root, registry, op.target);
+            if (key === null) {
+                throw new Error("remjs: cannot apply set op with empty target");
             }
-            const parentPath = op.path.slice(0, -1);
-            const key = op.path[op.path.length - 1];
-            const parent = walkTo(root, parentPath);
-            parent[key] = decode(op.value);
+            container[key] = value;
             return root;
         }
         case "delete": {
-            if (op.path.length === 0) {
-                throw new Error("remjs: cannot apply delete op with empty path");
+            const { container, key } = resolveTarget(root, registry, op.target);
+            if (key === null) {
+                throw new Error("remjs: cannot apply delete op with empty target");
             }
-            const parentPath = op.path.slice(0, -1);
-            const key = op.path[op.path.length - 1];
-            const parent = walkTo(root, parentPath);
-            delete parent[key];
+            delete container[key];
             return root;
         }
         case "mapSet": {
-            const target = walkTo(root, op.path);
-            target.set(decode(op.key), decode(op.value));
+            const decodeOpts = makeDecodeOpts(registry);
+            const { container } = resolveTarget(root, registry, op.target);
+            container.set(decode(op.key, decodeOpts), decode(op.value, decodeOpts));
             return root;
         }
         case "mapDelete": {
-            const target = walkTo(root, op.path);
-            target.delete(decode(op.key));
+            const decodeOpts = makeDecodeOpts(registry);
+            const { container } = resolveTarget(root, registry, op.target);
+            container.delete(decode(op.key, decodeOpts));
             return root;
         }
         case "mapClear": {
-            const target = walkTo(root, op.path);
-            target.clear();
+            const { container } = resolveTarget(root, registry, op.target);
+            container.clear();
             return root;
         }
         case "setAdd": {
-            const target = walkTo(root, op.path);
-            target.add(decode(op.value));
+            const decodeOpts = makeDecodeOpts(registry);
+            const { container } = resolveTarget(root, registry, op.target);
+            container.add(decode(op.value, decodeOpts));
             return root;
         }
         case "setDelete": {
-            const target = walkTo(root, op.path);
-            target.delete(decode(op.value));
+            const decodeOpts = makeDecodeOpts(registry);
+            const { container } = resolveTarget(root, registry, op.target);
+            container.delete(decode(op.value, decodeOpts));
             return root;
         }
         case "setClear": {
-            const target = walkTo(root, op.path);
-            target.clear();
+            const { container } = resolveTarget(root, registry, op.target);
+            container.clear();
             return root;
         }
     }
 }
-function applyOps(root, ops) {
+function applyOps(root, ops, registry) {
     for (const op of ops)
-        root = applyOp(root, op);
+        root = applyOp(root, op, registry);
     return root;
+}
+/* ── Snapshot reconstruction ──────────────────────────────────────── */
+function applySnapshot(op, registry) {
+    // Tree snapshot (v0.1): single encoded value at the root.
+    if (op.value !== undefined) {
+        return decode(op.value, makeDecodeOpts(registry));
+    }
+    // Graph snapshot (v0.2): two-pass reconstruction.
+    if (op.objects && op.rootIds) {
+        // Phase 1: clear the registry and create empty placeholders for
+        // each tracked object. The placeholder type matches what the
+        // encoded form is — array, Map, Set, or plain object.
+        registry.clear();
+        const placeholders = new Map();
+        for (const { id, encoded } of op.objects) {
+            const placeholder = makePlaceholder(encoded);
+            placeholders.set(id, placeholder);
+            registry.adopt(placeholder, id);
+        }
+        // Phase 2: decode each entry's contents (refs resolve through the
+        // registry, returning the placeholders) and copy into the placeholder.
+        const decodeOpts = makeDecodeOpts(registry);
+        for (const { id, encoded } of op.objects) {
+            const placeholder = placeholders.get(id);
+            const decoded = decode(encoded, decodeOpts);
+            hydratePlaceholder(placeholder, decoded);
+        }
+        // Return the first root id's object as the new root. If there are
+        // multiple roots, callers should consult `registry.getObjectById`
+        // for each root id.
+        if (op.rootIds.length === 0)
+            return null;
+        return placeholders.get(op.rootIds[0]) ?? null;
+    }
+    throw new Error("remjs: snapshot op has neither `value` nor `objects`+`rootIds`");
+}
+/** Build an empty placeholder of the right type for an encoded value. */
+function makePlaceholder(encoded) {
+    if (Array.isArray(encoded))
+        return [];
+    if (encoded && typeof encoded === "object" && TAG in encoded) {
+        const tag = encoded[TAG];
+        if (tag === "map")
+            return new Map();
+        if (tag === "set")
+            return new Set();
+    }
+    return {};
+}
+/** Copy decoded contents into an existing placeholder of the right type. */
+function hydratePlaceholder(placeholder, decoded) {
+    if (Array.isArray(placeholder) && Array.isArray(decoded)) {
+        placeholder.length = 0;
+        for (const item of decoded)
+            placeholder.push(item);
+        return;
+    }
+    if (placeholder instanceof Map && decoded instanceof Map) {
+        placeholder.clear();
+        for (const [k, v] of decoded)
+            placeholder.set(k, v);
+        return;
+    }
+    if (placeholder instanceof Set && decoded instanceof Set) {
+        placeholder.clear();
+        for (const v of decoded)
+            placeholder.add(v);
+        return;
+    }
+    if (typeof decoded === "object" && decoded !== null && !Array.isArray(decoded)) {
+        // Plain object — copy own keys
+        for (const k of Object.keys(decoded)) {
+            placeholder[k] = decoded[k];
+        }
+        return;
+    }
+    throw new Error("remjs: placeholder type mismatch during snapshot hydration");
+}
+/* ── Decode options ───────────────────────────────────────────────── */
+function makeDecodeOpts(registry) {
+    return {
+        resolveRef: (id) => registry.getObjectById(id),
+        adoptObject: (id, obj) => registry.adopt(obj, id),
+    };
 }
 function createReceiver(initial) {
     let root = initial ?? {};
+    const registry = createObjectRegistry();
     return {
         get state() {
             return root;
         },
+        get registry() {
+            return registry;
+        },
         apply(ops) {
-            root = applyOps(root, ops);
+            root = applyOps(root, ops, registry);
         },
     };
 }
+/* ── Helper for callers that don't have a registry ────────────────── */
+/** Backward-compat shim: applyOps with an implicit fresh registry.
+ *  The original v0.1 signature was `applyOps(root, ops)` (no registry).
+ *  Tests and demos that use the legacy alias still expect the two-arg
+ *  form to work. This wrapper provides it. */
+function applyOpsLegacy(root, ops) {
+    return applyOps(root, ops, createObjectRegistry());
+}
+/** Same backward-compat shim for single-op application. */
+function applyOpLegacy(root, op) {
+    return applyOp(root, op, createObjectRegistry());
+}
 
-/* ---------- stream.js ---------- */
+/* ---------- observer.js ---------- */
 /**
- * createStateStream — the main public API.
+ * createObserver — the v0.2 source-side primitive.
  *
- * Wraps an initial state object in deep proxies that emit ops on mutation.
- * Ops are batched according to `batch` and handed to `onOps` as an array.
- * The caller is responsible for shipping the batch somewhere (WebSocket,
- * postMessage, in-memory bus, etc).
+ * The JS-state analog of remdom's `createObserver`. Returns a handle that
+ * owns:
+ *   - an `ObjectRegistry` for stable id assignment to tracked objects
+ *   - a batched op stream that flushes via the configured `batchMode`
+ *   - lifecycle methods (`snapshot`, `flush`, `destroy`)
+ *   - the `track(obj)` method which adds an object to be observed and
+ *     returns a Proxy-wrapped version
+ *
+ * Multiple `track()` calls all feed the same op stream and share the
+ * same registry, so cross-references between tracked objects are
+ * preserved (an object referenced from another tracked object is itself
+ * tracked, with the same id everywhere it appears).
+ *
+ * Unlike remdom's `createObserver` there's no `root` parameter — JS
+ * state has no canonical root, and forcing one would be inventing
+ * structure where none exists. The user adds tracked roots explicitly
+ * via `track()`. Future v0.3+ adds higher-level capture mechanisms
+ * (`observeGlobal()`, `hookFramework("react")`, etc.) on the same
+ * observer object so explicit tracking and broader capture coexist.
  */
-function createStateStream(initial, options = {}) {
-    const { onOps, batch = "microtask" } = options;
+function createObserver(options = {}) {
+    const { onOps, registry = createObjectRegistry(), batchMode = "microtask", resyncInterval = 0, } = options;
     let pending = [];
     let scheduled = false;
-    let disposed = false;
+    let destroyed = false;
+    let opsSinceResync = 0;
+    /** Set of explicitly tracked root ids — every `track(obj)` adds one.
+     *  Snapshot uses this to know which ids are "top-level" vs reachable. */
+    const rootIds = new Set();
     const flush = () => {
         scheduled = false;
-        if (pending.length === 0)
+        if (pending.length === 0 || destroyed)
             return;
         const toSend = pending;
         pending = [];
-        if (!disposed)
-            onOps?.(toSend);
+        opsSinceResync += toSend.length;
+        // Periodic resync: replace accumulated ops with a fresh snapshot.
+        if (resyncInterval > 0 && opsSinceResync >= resyncInterval) {
+            opsSinceResync = 0;
+            onOps?.([buildSnapshot()]);
+            return;
+        }
+        onOps?.(toSend);
     };
     const schedule = () => {
-        if (scheduled || disposed)
+        if (scheduled || destroyed)
             return;
         scheduled = true;
-        if (batch === "sync") {
+        if (batchMode === "sync") {
             flush();
         }
-        else if (batch === "microtask") {
+        else if (batchMode === "microtask") {
             queueMicrotask(flush);
         }
-        else if (batch === "raf" && typeof requestAnimationFrame === "function") {
+        else if (batchMode === "raf" && typeof requestAnimationFrame === "function") {
             requestAnimationFrame(flush);
         }
-        else if (typeof batch === "number") {
-            setTimeout(flush, batch);
+        else if (typeof batchMode === "number") {
+            setTimeout(flush, batchMode);
         }
         else {
             queueMicrotask(flush);
         }
     };
     const emit = (op) => {
-        if (disposed)
+        if (destroyed)
             return;
         pending.push(op);
         schedule();
     };
-    const state = wrap(initial, [], emit);
+    const track = (obj) => {
+        // Eagerly walk the graph and assign ids to every reachable object,
+        // so subsequent ops referring to nested objects can encode them as
+        // refs. This matches remdom's `walkAndAssign` at observe time.
+        registry.walkAndAssign(obj);
+        rootIds.add(registry.assignId(obj));
+        return wrap(obj, registry, emit);
+    };
+    const buildSnapshot = () => {
+        // Walk every tracked object via the registry's entries iterator.
+        // For each, encode its contents (top-level, so nested refs become
+        // ref tags) into a graph entry.
+        const objects = [];
+        const refOf = (o) => registry.getIdOf(o);
+        for (const [id, obj] of registry.entries()) {
+            objects.push({ id, encoded: encodeContents(obj, { refOf }) });
+        }
+        return {
+            type: "snapshot",
+            objects,
+            rootIds: Array.from(rootIds),
+        };
+    };
+    return {
+        track,
+        snapshot: buildSnapshot,
+        flush,
+        destroy: () => {
+            destroyed = true;
+        },
+        get registry() {
+            return registry;
+        },
+    };
+}
+
+/* ---------- stream.js ---------- */
+/**
+ * createStateStream — v0.1 compatibility shim.
+ *
+ * Wraps a single state object via the v0.2 `createObserver` primitive
+ * and exposes the v0.1 return shape (`state`, `snapshot`, `flush`,
+ * `dispose`). Existing demos and consumers that pass a single root
+ * object continue to work without changes — though the emitted ops
+ * are now in the v0.2 ref-addressed shape, not the v0.1 path-addressed
+ * shape. v0.1 op-shape consumers (i.e. tests asserting on the wire
+ * format directly) need to update; v0.1 *behavior* consumers (i.e.
+ * apps that just call `state.foo = bar` and ship ops over a transport)
+ * are unaffected.
+ *
+ * For new code prefer `createObserver()` directly — it supports
+ * multiple tracked roots, returns the registry, and admits the future
+ * `observeGlobal()` / `hookFramework()` capture mechanisms.
+ */
+function createStateStream(initial, options = {}) {
+    const observer = createObserver({
+        onOps: options.onOps,
+        batchMode: options.batch,
+    });
+    const state = observer.track(initial);
     return {
         state,
-        snapshot: () => ({ type: "snapshot", value: encode(initial) }),
-        flush,
-        dispose: () => {
-            disposed = true;
-        },
+        snapshot: () => observer.snapshot(),
+        flush: () => observer.flush(),
+        dispose: () => observer.destroy(),
     };
 }
 
 
 window.remjs = {
-  createStateStream,
+  // v0.2 primary API
+  createObserver,
+  createObjectRegistry,
+  // Receiver
   applyOp,
   applyOps,
   createReceiver,
+  // Codec
   encode,
+  encodeContents,
   decode,
+  // v0.1 compatibility shim
+  createStateStream,
+  // Op helpers
+  normalizeLegacyOp,
   TAG,
 };
 

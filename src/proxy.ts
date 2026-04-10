@@ -1,20 +1,21 @@
 /**
- * Deep proxy wrapping for state trees.
+ * Deep proxy wrapping for state objects and graphs.
  *
- * `wrap(target, path, emit)` returns a proxy over `target` that emits an Op
- * whenever the target is mutated. Nested objects/arrays/Maps/Sets returned
- * from reads are wrapped lazily with an extended path, so mutations through
- * any path in the tree are tracked.
+ * `wrap(target, registry, emit)` returns a proxy over `target` that
+ * emits an Op whenever the target is mutated. Nested objects returned
+ * from reads are wrapped lazily with the same registry and `emit`
+ * callback, so mutations through any path in the graph are tracked.
  *
- * Caching note: once a target is wrapped, the resulting proxy is cached. If
- * the same target is later placed at a different path in the tree, mutations
- * through the cached proxy will still be reported at its original path. Most
- * apps store each object at exactly one path so this is rarely an issue, but
- * it's a known limitation of the lightweight design.
+ * Each tracked object gets a stable id from the registry; emitted ops
+ * carry `target: { kind: "ref", id, prop }` so the receiver can mutate
+ * the exact object regardless of which path it was reached through.
+ * Shared references and cycles work because the registry assigns the
+ * same id to the same target on every walk.
  */
 
 import { encode } from "./codec.js";
-import type { Op, Path } from "./ops.js";
+import type { Op, Target } from "./ops.js";
+import type { ObjectRegistry } from "./registry.js";
 import { RAW } from "./proxy-symbol.js";
 
 export type Emit = (op: Op) => void;
@@ -23,46 +24,85 @@ const proxyCache = new WeakMap<object, unknown>();
 
 function isWrappable(v: unknown): v is object {
   if (v === null || typeof v !== "object") return false;
-  // Leaf types — encoded as values, never mutated in place.
   if (v instanceof Date) return false;
   if (v instanceof RegExp) return false;
   return true;
 }
 
 function unwrap<T>(v: T): T {
-  if (v !== null && typeof v === "object" && (v as any)[RAW]) {
-    return (v as any)[RAW];
+  if (v !== null && typeof v === "object" && (v as Record<symbol, unknown>)[RAW]) {
+    return (v as Record<symbol, T>)[RAW];
   }
   return v;
 }
 
-export function wrap<T extends object>(target: T, path: Path, emit: Emit): T {
+/** Encode helper bundle for the proxy. Emits refs for already-tracked
+ *  objects and newobj tags (with freshly-assigned ids) for new ones, so
+ *  the receiver can adopt every id this op introduces. */
+function makeEncodeOpts(
+  registry: ObjectRegistry,
+): import("./codec.js").EncodeOptions {
+  return {
+    refOf: (obj) => registry.getIdOf(obj),
+    assignId: (obj) => registry.assignId(obj),
+  };
+}
+
+/**
+ * Wrap a target object in a proxy that emits ops on mutation.
+ *
+ * @param target — the raw object to wrap (must not already be a proxy)
+ * @param registry — the ObjectRegistry that owns id assignment
+ * @param emit — callback that receives each op as it's produced
+ */
+export function wrap<T extends object>(
+  target: T,
+  registry: ObjectRegistry,
+  emit: Emit,
+): T {
   if (!isWrappable(target)) return target;
 
   const cached = proxyCache.get(target);
   if (cached) return cached as T;
 
+  // Assign an id eagerly so the registry knows about this object before
+  // any of its children are walked.
+  registry.assignId(target);
+
   let proxy: T;
   if (target instanceof Map) {
-    proxy = wrapMap(target as unknown as Map<unknown, unknown>, path, emit) as unknown as T;
+    proxy = wrapMap(
+      target as unknown as Map<unknown, unknown>,
+      registry,
+      emit,
+    ) as unknown as T;
   } else if (target instanceof Set) {
-    proxy = wrapSet(target as unknown as Set<unknown>, path, emit) as unknown as T;
+    proxy = wrapSet(
+      target as unknown as Set<unknown>,
+      registry,
+      emit,
+    ) as unknown as T;
   } else {
-    proxy = wrapObject(target, path, emit);
+    proxy = wrapObject(target, registry, emit);
   }
 
   proxyCache.set(target, proxy);
   return proxy;
 }
 
-function wrapObject<T extends object>(target: T, path: Path, emit: Emit): T {
+function wrapObject<T extends object>(
+  target: T,
+  registry: ObjectRegistry,
+  emit: Emit,
+): T {
+  const encodeOpts = makeEncodeOpts(registry);
   return new Proxy(target, {
     get(t, prop, receiver) {
       if (prop === RAW) return t;
       const value = Reflect.get(t, prop, receiver);
       if (typeof prop === "symbol") return value;
       if (isWrappable(value)) {
-        return wrap(value as object, [...path, prop as string], emit);
+        return wrap(value as object, registry, emit);
       }
       return value;
     },
@@ -76,8 +116,8 @@ function wrapObject<T extends object>(target: T, path: Path, emit: Emit): T {
       if (result) {
         emit({
           type: "set",
-          path: [...path, prop as string],
-          value: encode(rawValue),
+          target: makeChildTarget(target, prop as string, registry),
+          value: encode(rawValue, encodeOpts),
         });
       }
       return result;
@@ -87,14 +127,22 @@ function wrapObject<T extends object>(target: T, path: Path, emit: Emit): T {
       if (typeof prop === "symbol") return Reflect.deleteProperty(t, prop);
       const result = Reflect.deleteProperty(t, prop);
       if (result) {
-        emit({ type: "delete", path: [...path, prop as string] });
+        emit({
+          type: "delete",
+          target: makeChildTarget(target, prop as string, registry),
+        });
       }
       return result;
     },
   });
 }
 
-function wrapMap<K, V>(target: Map<K, V>, path: Path, emit: Emit): Map<K, V> {
+function wrapMap<K, V>(
+  target: Map<K, V>,
+  registry: ObjectRegistry,
+  emit: Emit,
+): Map<K, V> {
+  const encodeOpts = makeEncodeOpts(registry);
   const proxy: Map<K, V> = new Proxy(target, {
     get(t, prop) {
       if (prop === RAW) return t;
@@ -106,9 +154,9 @@ function wrapMap<K, V>(target: Map<K, V>, path: Path, emit: Emit): Map<K, V> {
           t.set(rawK, rawV);
           emit({
             type: "mapSet",
-            path,
-            key: encode(rawK),
-            value: encode(rawV),
+            target: makeSelfTarget(target, registry),
+            key: encode(rawK, encodeOpts),
+            value: encode(rawV, encodeOpts),
           });
           return proxy;
         };
@@ -119,7 +167,11 @@ function wrapMap<K, V>(target: Map<K, V>, path: Path, emit: Emit): Map<K, V> {
           const rawK = unwrap(k);
           const existed = t.delete(rawK);
           if (existed) {
-            emit({ type: "mapDelete", path, key: encode(rawK) });
+            emit({
+              type: "mapDelete",
+              target: makeSelfTarget(target, registry),
+              key: encode(rawK, encodeOpts),
+            });
           }
           return existed;
         };
@@ -129,14 +181,14 @@ function wrapMap<K, V>(target: Map<K, V>, path: Path, emit: Emit): Map<K, V> {
         return () => {
           if (t.size > 0) {
             t.clear();
-            emit({ type: "mapClear", path });
+            emit({
+              type: "mapClear",
+              target: makeSelfTarget(target, registry),
+            });
           }
         };
       }
 
-      // Everything else (get, has, size, keys, values, entries, forEach, @@iterator)
-      // reads from the raw target. Function results are bound to the raw target
-      // so internal slot access works.
       const val = Reflect.get(t, prop, t);
       return typeof val === "function" ? val.bind(t) : val;
     },
@@ -144,7 +196,12 @@ function wrapMap<K, V>(target: Map<K, V>, path: Path, emit: Emit): Map<K, V> {
   return proxy;
 }
 
-function wrapSet<V>(target: Set<V>, path: Path, emit: Emit): Set<V> {
+function wrapSet<V>(
+  target: Set<V>,
+  registry: ObjectRegistry,
+  emit: Emit,
+): Set<V> {
+  const encodeOpts = makeEncodeOpts(registry);
   const proxy: Set<V> = new Proxy(target, {
     get(t, prop) {
       if (prop === RAW) return t;
@@ -154,7 +211,11 @@ function wrapSet<V>(target: Set<V>, path: Path, emit: Emit): Set<V> {
           const rawV = unwrap(v);
           if (!t.has(rawV)) {
             t.add(rawV);
-            emit({ type: "setAdd", path, value: encode(rawV) });
+            emit({
+              type: "setAdd",
+              target: makeSelfTarget(target, registry),
+              value: encode(rawV, encodeOpts),
+            });
           }
           return proxy;
         };
@@ -165,7 +226,11 @@ function wrapSet<V>(target: Set<V>, path: Path, emit: Emit): Set<V> {
           const rawV = unwrap(v);
           const existed = t.delete(rawV);
           if (existed) {
-            emit({ type: "setDelete", path, value: encode(rawV) });
+            emit({
+              type: "setDelete",
+              target: makeSelfTarget(target, registry),
+              value: encode(rawV, encodeOpts),
+            });
           }
           return existed;
         };
@@ -175,7 +240,10 @@ function wrapSet<V>(target: Set<V>, path: Path, emit: Emit): Set<V> {
         return () => {
           if (t.size > 0) {
             t.clear();
-            emit({ type: "setClear", path });
+            emit({
+              type: "setClear",
+              target: makeSelfTarget(target, registry),
+            });
           }
         };
       }
@@ -185,4 +253,28 @@ function wrapSet<V>(target: Set<V>, path: Path, emit: Emit): Set<V> {
     },
   });
   return proxy;
+}
+
+/* ── Target construction ─────────────────────────────────────────── */
+
+/** Build the `target` field for an op that affects a property of `parent`. */
+function makeChildTarget(
+  parent: object,
+  prop: string,
+  registry: ObjectRegistry,
+): Target {
+  return {
+    kind: "ref",
+    id: registry.assignId(parent),
+    prop,
+  };
+}
+
+/** Build the `target` field for an op that affects the wrapped object
+ *  itself (e.g. mapClear, setAdd — the target IS the Map/Set). */
+function makeSelfTarget(target: object, registry: ObjectRegistry): Target {
+  return {
+    kind: "ref",
+    id: registry.assignId(target),
+  };
 }

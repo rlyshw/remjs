@@ -15,7 +15,6 @@ Then pick a demo:
 
 | Demo        | Command                      | URL                    |
 | ----------- | ---------------------------- | ---------------------- |
-| Counter     | `npm run example:counter`    | http://localhost:7401  |
 | Todo        | `npm run example:todo`       | http://localhost:7402  |
 | Dashboard   | `npm run example:dashboard`  | http://localhost:7403  |
 

@@ -1,4 +1,7 @@
 import { connect } from "/_shared/client.js";
+import { createInspector } from "/_shared/inspector.js";
+
+const inspector = createInspector(document.getElementById("inspector"));
 
 const $cpu = document.getElementById("cpu");
 const $mem = document.getElementById("memory");
@@ -61,4 +64,7 @@ function render(state) {
   $meta.textContent = `tick ${state.tick} · uptime ${uptime}s`;
 }
 
-connect({ onChange: render });
+connect({
+  onChange: render,
+  onMessage: (msg) => inspector.onMessage(msg),
+});

@@ -20,18 +20,25 @@ identical, verified every tick.
 
 ## Documentation
 
-- [`docs/USAGE.md`](docs/USAGE.md) — practical guide. Install, the four
-  batching modes, snapshot/dispose/flush, special types, edge cases,
-  integration patterns for React/WebSocket/BroadcastChannel/replay.
-- [`docs/WIRE_FORMAT.md`](docs/WIRE_FORMAT.md) — full op protocol
-  reference. Every op type with its JSON shape, the `__remjs` tag
-  scheme for non-JSON-safe values, ordering and trust model, an
-  example session, notes for non-JS receivers.
+- [`CHANGELOG.md`](CHANGELOG.md) — version history. **v0.2 introduced
+  `createObserver` as the primary primitive** (the JS analog of
+  remdom's `createObserver`), ref-based addressing, graph-shaped
+  snapshots with cycle/shared-reference support, and a compatibility
+  shim that keeps `createStateStream` working.
+- [`docs/USAGE.md`](docs/USAGE.md) — practical guide. createObserver
+  quick-start, multiple tracked roots, bidirectional sync via shared
+  registries, the four batching modes, snapshot/flush/destroy
+  semantics, special types, edge cases, integration patterns.
+- [`docs/WIRE_FORMAT.md`](docs/WIRE_FORMAT.md) — op protocol
+  reference. v0.2 ref-based and path-based addressing, the `__remjs:
+  "ref"` and `__remjs: "newobj"` tagged value types, graph snapshot
+  reconstruction, backward-compat normalization of v0.1 ops, notes
+  for non-JS receivers.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — internal design.
-  Why Proxy over the alternatives, why Map/Set need per-method
-  wrapping, the proxy cache and its single caveat, the codec, the
-  receiver, performance notes, and what would change if remjs grew
-  toward "the entire JS heap".
+  What translated from remdom 1:1 and what didn't (and why), the
+  capture-scope roadmap from L0 (current MVP) toward L3 (transparent
+  closure capture via rembrowser), why ref-based addressing,
+  trade-offs, performance characteristics.
 
 ## The idea
 

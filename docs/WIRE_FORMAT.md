@@ -3,6 +3,115 @@
 The op protocol is plain JSON. Any language with a JSON library can produce
 or consume it. This document is the canonical reference.
 
+## v0.2 changes
+
+v0.2 introduced **ref-based addressing** alongside the original path-based
+addressing, plus **graph-shaped snapshots** that handle cycles and shared
+references. This section summarizes the new wire shape; the rest of the
+document still describes the v0.1 protocol, which v0.2 receivers continue
+to accept and normalize on the fly.
+
+### Ops carry a `target` discriminated union
+
+```ts
+type Target =
+  | { kind: "path"; path: string[] }              // v0.1, walk a tree from a snapshot root
+  | { kind: "ref"; id: string; prop?: string };   // v0.2, look up by id in the receiver's registry
+```
+
+```json
+{ "type": "set", "target": { "kind": "ref", "id": "abc-123", "prop": "name" }, "value": "Bob" }
+{ "type": "delete", "target": { "kind": "ref", "id": "abc-123", "prop": "email" } }
+{ "type": "mapSet", "target": { "kind": "ref", "id": "xyz-456" }, "key": "k", "value": 42 }
+```
+
+For Map/Set ops where the target IS the Map/Set, `prop` is omitted.
+
+### `__remjs: "ref"` tagged value
+
+When an encoded value points at an already-tracked object, it's emitted as
+a ref tag rather than recursively walked. The receiver resolves it through
+its own registry.
+
+```json
+{ "__remjs": "ref", "id": "abc-123" }
+```
+
+### `__remjs: "newobj"` tagged value
+
+When an encoded value introduces a brand-new tracked object, the encoder
+assigns it an id at encode time and wraps the contents with the id so the
+receiver can adopt the same id. The receiver creates a placeholder of the
+right kind, registers it, and hydrates from the contents.
+
+```json
+{
+  "__remjs": "newobj",
+  "id": "def-456",
+  "kind": "object",
+  "contents": { "name": "Alice", "age": 30 }
+}
+```
+
+`kind` is one of `"object"`, `"array"`, `"map"`, or `"set"` so the
+receiver knows what container shape to allocate before hydrating.
+
+### Graph-shaped snapshots
+
+```json
+{
+  "type": "snapshot",
+  "rootIds": ["root-1"],
+  "objects": [
+    { "id": "root-1", "encoded": { "user": { "__remjs": "ref", "id": "u-1" }, "tags": { "__remjs": "ref", "id": "t-1" } } },
+    { "id": "u-1",    "encoded": { "name": "Alice", "joined": { "__remjs": "date", "v": 1735689600000 } } },
+    { "id": "t-1",    "encoded": { "__remjs": "set", "values": ["admin", "active"] } }
+  ]
+}
+```
+
+The receiver does a **two-pass reconstruction**:
+
+1. Walk `objects`, create an empty placeholder for each entry of the right
+   kind (object/array/map/set), and adopt the supplied id into the
+   receiver's registry.
+2. Walk `objects` again, decode each `encoded` field. Refs in the encoded
+   form resolve to the placeholders created in pass 1. Hydrate each
+   placeholder with the decoded contents.
+
+This is what makes shared references and cycles round-trip — `receiver.a
+=== receiver.b` is preserved if `source.a === source.b` because both
+sides resolve through the same id.
+
+### Snapshot tree-mode (legacy)
+
+The v0.1 snapshot shape is still accepted by the receiver:
+
+```json
+{ "type": "snapshot", "value": <encoded tree> }
+```
+
+The receiver checks for `value` first; if absent, it expects `objects` +
+`rootIds`. New senders should always emit the graph form.
+
+### Backward compatibility
+
+v0.2 receivers normalize v0.1 ops on the fly:
+
+```json
+// v0.1 op (no target field, top-level path)
+{ "type": "set", "path": ["count"], "value": 5 }
+
+// Internally rewritten by the receiver to:
+{ "type": "set", "target": { "kind": "path", "path": ["count"] }, "value": 5 }
+```
+
+So a v0.1 sender talking to a v0.2 receiver works with no changes. The
+reverse (v0.2 sender to v0.1 receiver) does NOT work — v0.1 receivers
+don't understand `target` or `__remjs: "ref"`.
+
+---
+
 ## Stream model
 
 A remjs stream is a sequence of **op batches**. Each batch is an array

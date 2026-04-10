@@ -1,23 +1,27 @@
 /**
  * Shared WebSocket session helper.
  *
- * Wraps a state object with createStateStream on the server. New clients
+ * Wraps a state object with `createObserver` on the server. New clients
  * receive a snapshot on connect, and any server-side mutations are fanned
- * out. Clients can also push ops back — those are applied to the raw state
- * (bypassing the proxy to avoid echoes) and then rebroadcast to other
- * clients.
+ * out. Clients can also push ops back — those go through `applyOps`
+ * with the observer's own registry, which mutates the underlying raw
+ * objects directly (bypassing the proxy traps so we don't echo).
  */
 
 import { WebSocketServer } from "ws";
-import { createStateStream, applyOps } from "../../dist/index.js";
+import { createObserver, applyOps } from "../../dist/index.js";
 
 export function createSession(rawState, server) {
   const subscribers = new Set();
 
-  const stream = createStateStream(rawState, {
+  const observer = createObserver({
     onOps: (ops) => broadcast({ type: "ops", ops }),
-    batch: "microtask",
+    batchMode: "microtask",
   });
+  // Tracking returns a proxy that emits ops on mutation. Server code that
+  // mutates state should go through this `state`, not the raw object,
+  // so its mutations are captured.
+  const state = observer.track(rawState);
 
   function broadcast(msg, except = null) {
     const payload = JSON.stringify(msg);
@@ -29,8 +33,8 @@ export function createSession(rawState, server) {
   const wss = new WebSocketServer({ server });
   wss.on("connection", (ws) => {
     subscribers.add(ws);
-    stream.flush();
-    ws.send(JSON.stringify({ type: "snapshot", op: stream.snapshot() }));
+    observer.flush();
+    ws.send(JSON.stringify({ type: "snapshot", op: observer.snapshot() }));
 
     ws.on("message", (data) => {
       let msg;
@@ -40,9 +44,10 @@ export function createSession(rawState, server) {
         return;
       }
       if (msg.type === "ops" && Array.isArray(msg.ops)) {
-        // Apply directly to the raw state — this bypasses the proxy so we
-        // don't echo the client's own ops back to them via onOps.
-        applyOps(rawState, msg.ops);
+        // Apply via the observer's registry. Ops mutate the raw objects
+        // directly (no proxy traps fire), so the client's mutation
+        // doesn't echo back through the observer's onOps.
+        applyOps(null, msg.ops, observer.registry);
         broadcast({ type: "ops", ops: msg.ops }, ws);
       }
     });
@@ -51,9 +56,10 @@ export function createSession(rawState, server) {
   });
 
   return {
-    state: stream.state,
+    state,
     raw: rawState,
     broadcast,
     subscribers,
+    observer,
   };
 }

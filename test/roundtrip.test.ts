@@ -17,8 +17,10 @@ function connect<T extends object>(initial: T) {
     onOps: (batch) => ops.push(...batch),
     batch: "sync",
   });
-  const receiver = createReceiver<T>(stream.snapshot().value as T);
-  // Snapshot is decoded JSON-style; re-hydrate via applyOps on the initial op
+  // v0.2: receiver starts empty. The snapshot adopts the source's
+  // object ids into the receiver's registry, so subsequent ref-based
+  // ops can be resolved.
+  const receiver = createReceiver<T>();
   receiver.apply([stream.snapshot()]);
 
   return {

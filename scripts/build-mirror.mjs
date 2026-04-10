@@ -23,9 +23,11 @@ const DIST = path.join(ROOT, "dist");
 const SOURCES = [
   "proxy-symbol.js",
   "ops.js",
+  "registry.js",
   "codec.js",
   "proxy.js",
   "apply.js",
+  "observer.js",
   "stream.js",
 ];
 
@@ -52,12 +54,21 @@ async function buildBundle() {
   // Expose the public surface on `window.remjs`.
   parts.push(`
 window.remjs = {
-  createStateStream,
+  // v0.2 primary API
+  createObserver,
+  createObjectRegistry,
+  // Receiver
   applyOp,
   applyOps,
   createReceiver,
+  // Codec
   encode,
+  encodeContents,
   decode,
+  // v0.1 compatibility shim
+  createStateStream,
+  // Op helpers
+  normalizeLegacyOp,
   TAG,
 };
 `);
