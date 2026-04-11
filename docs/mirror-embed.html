@@ -1253,7 +1253,7 @@ window.remjs = {
     </script>
     <script>
 (function () {
-  const { createStateStream, applyOps, decode } = window.remjs;
+  const { createStateStream, createReceiver } = window.remjs;
 
   const W = 520, H = 400;
   const LAUNCHER = { x: W / 2, y: H - 32 };
@@ -1281,7 +1281,7 @@ window.remjs = {
   let source = makeInitial();
   let stream = null;
   let proxy = null;
-  let mirror = null;
+  let receiver = null;
 
   function flashPulse(el) {
     el.classList.add("active");
@@ -1291,7 +1291,7 @@ window.remjs = {
   function pipe(ops) {
     flashPulse($pulseSource);
     const wire = JSON.stringify(ops);
-    applyOps(mirror, JSON.parse(wire));
+    receiver.apply(JSON.parse(wire));
     flashPulse($pulseMirror);
   }
 
@@ -1300,7 +1300,8 @@ window.remjs = {
     source = makeInitial();
     stream = createStateStream(source, { onOps: pipe, batch: "microtask" });
     proxy = stream.state;
-    mirror = decode(stream.snapshot().value);
+    receiver = createReceiver();
+    receiver.apply([stream.snapshot()]);
   }
 
   function launchPuck(aimX, aimY) {
@@ -1503,12 +1504,14 @@ window.remjs = {
   }
 
   function checkIntegrity() {
-    if (source.tick !== mirror.tick) return false;
-    if (source.score !== mirror.score) return false;
-    if (source.pucks.length !== mirror.pucks.length) return false;
-    if (source.shots.length !== mirror.shots.length) return false;
+    var m = receiver ? receiver.state : null;
+    if (!m) return false;
+    if (source.tick !== m.tick) return false;
+    if (source.score !== m.score) return false;
+    if (source.pucks.length !== m.pucks.length) return false;
+    if (source.shots.length !== m.shots.length) return false;
     for (let i = 0; i < source.pucks.length; i++) {
-      const a = source.pucks[i], b = mirror.pucks[i];
+      const a = source.pucks[i], b = m.pucks[i];
       if (a.x !== b.x || a.y !== b.y || a.stopped !== b.stopped || a.points !== b.points) return false;
     }
     return true;
@@ -1518,7 +1521,7 @@ window.remjs = {
     step();
     stream.flush();
     drawScene(sctx, source, true);
-    drawScene(mctx, mirror, false);
+    drawScene(mctx, receiver.state, false);
     requestAnimationFrame(loop);
   }
 

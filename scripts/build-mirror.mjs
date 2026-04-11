@@ -348,7 +348,7 @@ ${bundle}
     <!-- ───────────── demo code ───────────── -->
     <script>
 (function () {
-  const { createStateStream, applyOps, decode } = window.remjs;
+  const { createStateStream, createReceiver } = window.remjs;
 
   /* court geometry --------------------------------------------------- */
 
@@ -442,7 +442,7 @@ ${bundle}
   let source = null;
   let stream = null;
   let proxy = null;
-  let mirror = null;
+  let receiver = null;
 
   let opsThisSec = 0;
   let batchesThisSec = 0;
@@ -466,7 +466,7 @@ ${bundle}
     const wire = JSON.stringify(ops);
     bytesThisSec += wire.length;
     const deliver = () => {
-      applyOps(mirror, JSON.parse(wire));
+      receiver.apply(JSON.parse(wire));
       flashPulse($pulseMirror);
     };
     if (delayMs > 0) setTimeout(deliver, delayMs);
@@ -478,7 +478,9 @@ ${bundle}
     source = makeInitialGame();
     stream = createStateStream(source, { onOps: pipe, batch: "microtask" });
     proxy = stream.state;
-    mirror = decode(stream.snapshot().value);
+    // Use createReceiver with the snapshot op to bootstrap the registry
+    receiver = createReceiver();
+    receiver.apply([stream.snapshot()]);
   }
 
   /* game actions ----------------------------------------------------- */
@@ -835,7 +837,7 @@ ${bundle}
     if (steps > 0) {
       stream.flush();
       updateTrails(sourceTrails, source);
-      updateTrails(mirrorTrails, mirror);
+      updateTrails(mirrorTrails, receiver.state);
       readoutDirty = true;
     }
   }
@@ -846,7 +848,7 @@ ${bundle}
       const t0 = performance.now();
       runPhysicsForFrame();
       drawScene(sctx, source, sourceTrails, "source", true);
-      drawScene(mctx, mirror, mirrorTrails, "mirror", false);
+      drawScene(mctx, receiver.state, mirrorTrails, "mirror", false);
       const t1 = performance.now();
       frameTimeAccum += t1 - t0;
       frameCount++;
@@ -867,7 +869,7 @@ ${bundle}
     step();
     stream.flush();
     updateTrails(sourceTrails, source);
-    updateTrails(mirrorTrails, mirror);
+    updateTrails(mirrorTrails, receiver.state);
     readoutDirty = true;
   }
 
@@ -903,7 +905,7 @@ ${bundle}
     readoutDirty = false;
 
     const srcText = serializeState(source);
-    const mirText = serializeState(mirror);
+    const mirText = serializeState(receiver.state);
     $sourceJson.textContent = srcText;
     $mirrorJson.textContent = mirText;
     $readoutWrap.classList.toggle("desync", srcText !== mirText);
@@ -912,6 +914,7 @@ ${bundle}
   /* stats / integrity ------------------------------------------------ */
 
   function checkIntegrity() {
+    var mirror = receiver ? receiver.state : null;
     if (!source || !mirror) return "initialising";
     if (source.tick !== mirror.tick) {
       return "tick drift (" + source.tick + " vs " + mirror.tick + ")";
@@ -1213,7 +1216,7 @@ ${bundle}
     </script>
     <script>
 (function () {
-  const { createStateStream, applyOps, decode } = window.remjs;
+  const { createStateStream, createReceiver } = window.remjs;
 
   const W = 520, H = 400;
   const LAUNCHER = { x: W / 2, y: H - 32 };
@@ -1241,7 +1244,7 @@ ${bundle}
   let source = makeInitial();
   let stream = null;
   let proxy = null;
-  let mirror = null;
+  let receiver = null;
 
   function flashPulse(el) {
     el.classList.add("active");
@@ -1251,7 +1254,7 @@ ${bundle}
   function pipe(ops) {
     flashPulse($pulseSource);
     const wire = JSON.stringify(ops);
-    applyOps(mirror, JSON.parse(wire));
+    receiver.apply(JSON.parse(wire));
     flashPulse($pulseMirror);
   }
 
@@ -1260,7 +1263,8 @@ ${bundle}
     source = makeInitial();
     stream = createStateStream(source, { onOps: pipe, batch: "microtask" });
     proxy = stream.state;
-    mirror = decode(stream.snapshot().value);
+    receiver = createReceiver();
+    receiver.apply([stream.snapshot()]);
   }
 
   function launchPuck(aimX, aimY) {
@@ -1463,12 +1467,14 @@ ${bundle}
   }
 
   function checkIntegrity() {
-    if (source.tick !== mirror.tick) return false;
-    if (source.score !== mirror.score) return false;
-    if (source.pucks.length !== mirror.pucks.length) return false;
-    if (source.shots.length !== mirror.shots.length) return false;
+    var m = receiver ? receiver.state : null;
+    if (!m) return false;
+    if (source.tick !== m.tick) return false;
+    if (source.score !== m.score) return false;
+    if (source.pucks.length !== m.pucks.length) return false;
+    if (source.shots.length !== m.shots.length) return false;
     for (let i = 0; i < source.pucks.length; i++) {
-      const a = source.pucks[i], b = mirror.pucks[i];
+      const a = source.pucks[i], b = m.pucks[i];
       if (a.x !== b.x || a.y !== b.y || a.stopped !== b.stopped || a.points !== b.points) return false;
     }
     return true;
@@ -1478,7 +1484,7 @@ ${bundle}
     step();
     stream.flush();
     drawScene(sctx, source, true);
-    drawScene(mctx, mirror, false);
+    drawScene(mctx, receiver.state, false);
     requestAnimationFrame(loop);
   }
 

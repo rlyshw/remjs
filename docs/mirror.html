@@ -1401,7 +1401,7 @@ window.remjs = {
     <!-- ───────────── demo code ───────────── -->
     <script>
 (function () {
-  const { createStateStream, applyOps, decode } = window.remjs;
+  const { createStateStream, createReceiver } = window.remjs;
 
   /* court geometry --------------------------------------------------- */
 
@@ -1495,7 +1495,7 @@ window.remjs = {
   let source = null;
   let stream = null;
   let proxy = null;
-  let mirror = null;
+  let receiver = null;
 
   let opsThisSec = 0;
   let batchesThisSec = 0;
@@ -1519,7 +1519,7 @@ window.remjs = {
     const wire = JSON.stringify(ops);
     bytesThisSec += wire.length;
     const deliver = () => {
-      applyOps(mirror, JSON.parse(wire));
+      receiver.apply(JSON.parse(wire));
       flashPulse($pulseMirror);
     };
     if (delayMs > 0) setTimeout(deliver, delayMs);
@@ -1531,7 +1531,9 @@ window.remjs = {
     source = makeInitialGame();
     stream = createStateStream(source, { onOps: pipe, batch: "microtask" });
     proxy = stream.state;
-    mirror = decode(stream.snapshot().value);
+    // Use createReceiver with the snapshot op to bootstrap the registry
+    receiver = createReceiver();
+    receiver.apply([stream.snapshot()]);
   }
 
   /* game actions ----------------------------------------------------- */
@@ -1888,7 +1890,7 @@ window.remjs = {
     if (steps > 0) {
       stream.flush();
       updateTrails(sourceTrails, source);
-      updateTrails(mirrorTrails, mirror);
+      updateTrails(mirrorTrails, receiver.state);
       readoutDirty = true;
     }
   }
@@ -1899,7 +1901,7 @@ window.remjs = {
       const t0 = performance.now();
       runPhysicsForFrame();
       drawScene(sctx, source, sourceTrails, "source", true);
-      drawScene(mctx, mirror, mirrorTrails, "mirror", false);
+      drawScene(mctx, receiver.state, mirrorTrails, "mirror", false);
       const t1 = performance.now();
       frameTimeAccum += t1 - t0;
       frameCount++;
@@ -1920,7 +1922,7 @@ window.remjs = {
     step();
     stream.flush();
     updateTrails(sourceTrails, source);
-    updateTrails(mirrorTrails, mirror);
+    updateTrails(mirrorTrails, receiver.state);
     readoutDirty = true;
   }
 
@@ -1956,7 +1958,7 @@ window.remjs = {
     readoutDirty = false;
 
     const srcText = serializeState(source);
-    const mirText = serializeState(mirror);
+    const mirText = serializeState(receiver.state);
     $sourceJson.textContent = srcText;
     $mirrorJson.textContent = mirText;
     $readoutWrap.classList.toggle("desync", srcText !== mirText);
@@ -1965,6 +1967,7 @@ window.remjs = {
   /* stats / integrity ------------------------------------------------ */
 
   function checkIntegrity() {
+    var mirror = receiver ? receiver.state : null;
     if (!source || !mirror) return "initialising";
     if (source.tick !== mirror.tick) {
       return "tick drift (" + source.tick + " vs " + mirror.tick + ")";
