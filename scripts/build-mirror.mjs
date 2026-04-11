@@ -164,12 +164,13 @@ const FULL_TEMPLATE = (bundle) => `<!doctype html>
         border-radius: 6px;
         cursor: crosshair;
       }
-      @media (max-width: 700px) {
+      @media (max-width: 900px) {
         .panes { grid-template-columns: 1fr; }
         body { margin: 1em auto; padding: 0 0.5em; }
         h1 { font-size: 1.3em; }
         .hint { font-size: 0.85em; }
         .controls { gap: 0.6em; font-size: 0.85em; }
+        .stats { grid-template-columns: repeat(3, 1fr); }
       }
       .hint-caption {
         text-align: center;

@@ -1,15 +1,27 @@
 # remjs
 
-Streaming JavaScript state serialization. Encodes JS heap deltas as a structured op stream — the same paradigm as remdom but at the execution level instead of the DOM level.
+Streaming JavaScript execution state. Encodes heap mutations as a structured op stream so multiple JS runtimes can share live application state — the running program, not its rendered output.
+
+## What this is for
+
+remjs keeps JS execution state synchronized across independent runtimes. Each runtime executes the same application code. As state mutates on one side, ops stream to the other side and apply to its heap, so both sides continue executing with identical state.
+
+The target scenario is **peers that each run their own copy of an app** — multiplayer games, collaborative editors, real-time dashboards, distributed simulations — where keeping the running programs in sync is the primary concern. Each peer renders its own UI from its own state; rendering is a local concern.
 
 ## Relationship to remdom
 
+remjs and remdom solve different problems at different layers of the stack:
+
 ```
-remjs  → streams JS execution state (objects, closures, bindings)
-remdom → streams DOM mutation state (nodes, attributes, text)
+remjs  → streams JS execution state (running program, shared between peers)
+remdom → streams DOM output state  (rendered document, server → thin clients)
 ```
 
-remdom encodes what JS *did* to the DOM. remjs encodes what JS *is* — the live application state that drives DOM mutations. Together, they can fully reconstruct a running web app on the receiving end.
+**remdom** is for "one source of truth renders, many passive viewers observe." The server executes the app and the DOM is the shared artifact. Clients don't run app code.
+
+**remjs** is for "many peers each run the app, keep their state in sync." Every peer executes the code independently, and heap-level mutations propagate so they stay in lockstep. DOM is rendered locally on each side from the same state.
+
+They can be used independently. A system that uses remjs typically does not need remdom: if the application state is consistent across peers and each peer runs the same code, each peer's DOM is implicitly consistent as a side effect of deterministic execution.
 
 ## The idea
 
@@ -63,7 +75,7 @@ state.todos.push('hi');  // → { type: 'arrayPush', path: ['todos'], value: 'hi
 state.user.name = 'Bob'; // → { type: 'set', path: ['user', 'name'], value: 'Bob' }
 ```
 
-This is tractable now and immediately useful for streaming React/Redux state between clients.
+This is tractable now and immediately useful for streaming React/Redux state between peers.
 
 ## Current state
 
@@ -71,7 +83,7 @@ Scaffolded. Research phase.
 
 ## Related repos
 
-- `../remdom/` — DOM-level streaming (production)
+- `../remdom/` — DOM output streaming (production)
 - `../remdom-browser/` — browser client for remdom
 - `../remdom-ios/` — iOS client for remdom
 - `../remdom-platform/` — managed service platform
