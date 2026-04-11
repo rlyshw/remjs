@@ -823,15 +823,25 @@ ${bundle}
   }
 
   function loop(ts) {
-    lastFrameTs = ts;
-    const t0 = performance.now();
-    runPhysicsForFrame();
-    drawScene(sctx, source, sourceTrails, "source", true);
-    drawScene(mctx, mirror, mirrorTrails, "mirror", false);
-    const t1 = performance.now();
-    frameTimeAccum += t1 - t0;
-    frameCount++;
-    maybeUpdateReadout();
+    try {
+      lastFrameTs = ts;
+      const t0 = performance.now();
+      runPhysicsForFrame();
+      drawScene(sctx, source, sourceTrails, "source", true);
+      drawScene(mctx, mirror, mirrorTrails, "mirror", false);
+      const t1 = performance.now();
+      frameTimeAccum += t1 - t0;
+      frameCount++;
+      maybeUpdateReadout();
+    } catch(err) {
+      // Show the error visually so mobile users can see what's wrong
+      const $int = document.getElementById("integrity");
+      if ($int) {
+        $int.className = "integrity bad";
+        $int.textContent = "ERROR: " + err.message;
+      }
+      console.error("[remjs loop]", err);
+    }
     requestAnimationFrame(loop);
   }
 
