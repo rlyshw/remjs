@@ -189,22 +189,29 @@ function normalizeLegacyOp(op) {
 /**
  * Object registry — stable id management for tracked JS objects.
  *
- * The JS-state analog of remdom's `NodeRegistry`. Assigns a UUID to each
- * tracked object on first observation, exposes bidirectional lookup
- * (`obj → id`, `id → obj`), and walks an object graph to assign ids
- * recursively (used at `track()` time and at `snapshot()` time).
+ * The JS-state analog of remdom's `NodeRegistry`. Assigns a UUID to
+ * each tracked object on first observation, exposes bidirectional
+ * lookup (`obj → id`, `id → obj`), and walks an object graph to assign
+ * ids recursively (used at `track()` time and at `snapshot()` time).
  *
- * Storage is dual:
- *   - A `WeakMap<object, string>` for the live `obj → id` lookup. This
- *     survives garbage collection automatically and works for frozen
- *     objects.
- *   - A `Map<string, WeakRef<object>>` for the `id → obj` lookup. The
- *     WeakRef lets the object be garbage-collected even though the id
- *     stays in the map. Stale entries are pruned lazily by
- *     `getObjectById` and `entries`.
+ * Storage:
+ *   - A `WeakMap<object, string>` for the live `obj → id` lookup. Used
+ *     so passing in a proxy (which has the raw target as a [[Target]])
+ *     transparently maps to the underlying id.
+ *   - A `Map<string, object>` for the `id → obj` lookup. **Strong** —
+ *     the registry holds tracked objects alive for as long as it
+ *     exists. The observer is the lifecycle manager: if you tracked it,
+ *     you wanted it kept around until `destroy()` / `clear()`.
  *
- * Leaf types (Date, RegExp, BigInt, primitives) are not tracked — they're
- * encoded by value, never by reference.
+ * Earlier versions used `WeakRef<object>` for the `id → obj` map. That
+ * caused intermittent bugs where V8's GC would collect tracked roots
+ * across async boundaries even when the host app held a module-level
+ * strong reference, because the registry side had no strong link.
+ * Strong references in the registry are the simpler and more
+ * predictable contract — drop the registry to release the objects.
+ *
+ * Leaf types (Date, RegExp, BigInt, primitives) are not tracked —
+ * they're encoded by value, never by reference.
  */
 
 /** If `obj` is a remjs proxy, return the raw target underneath; otherwise
@@ -238,7 +245,7 @@ function isTrackable(v) {
 }
 function createObjectRegistry() {
     const objToId = new WeakMap();
-    const idToRef = new Map();
+    const idToObj = new Map();
     function assignId(obj) {
         const target = unwrapForLookup(obj);
         const cached = objToId.get(target);
@@ -246,7 +253,7 @@ function createObjectRegistry() {
             return cached;
         const id = generateId();
         objToId.set(target, id);
-        idToRef.set(id, new WeakRef(target));
+        idToObj.set(id, target);
         return id;
     }
     function adopt(obj, id) {
@@ -259,21 +266,13 @@ function createObjectRegistry() {
             return;
         }
         objToId.set(target, id);
-        idToRef.set(id, new WeakRef(target));
+        idToObj.set(id, target);
     }
     function getIdOf(obj) {
         return objToId.get(unwrapForLookup(obj)) ?? null;
     }
     function getObjectById(id) {
-        const ref = idToRef.get(id);
-        if (!ref)
-            return null;
-        const obj = ref.deref();
-        if (!obj) {
-            idToRef.delete(id);
-            return null;
-        }
-        return obj;
+        return idToObj.get(id) ?? null;
     }
     function walkAndAssign(root) {
         if (!isTrackable(root))
@@ -320,18 +319,10 @@ function createObjectRegistry() {
         }
     }
     function* entries() {
-        for (const [id, ref] of idToRef) {
-            const obj = ref.deref();
-            if (obj) {
-                yield [id, obj];
-            }
-            else {
-                idToRef.delete(id);
-            }
-        }
+        yield* idToObj;
     }
     function clear() {
-        idToRef.clear();
+        idToObj.clear();
         // The WeakMap can't be cleared directly; it'll GC naturally as
         // references die. The next assignId on a previously-tracked object
         // will see no entry and assign a fresh id.

@@ -159,9 +159,17 @@ const FULL_TEMPLATE = (bundle) => `<!doctype html>
       canvas {
         display: block;
         width: 100%;
+        aspect-ratio: 4 / 3;
         background: #0e1116;
         border-radius: 6px;
         cursor: crosshair;
+      }
+      @media (max-width: 700px) {
+        .panes { grid-template-columns: 1fr; }
+        body { margin: 1em auto; padding: 0 0.5em; }
+        h1 { font-size: 1.3em; }
+        .hint { font-size: 0.85em; }
+        .controls { gap: 0.6em; font-size: 0.85em; }
       }
       .hint-caption {
         text-align: center;
