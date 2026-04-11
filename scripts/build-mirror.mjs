@@ -667,6 +667,23 @@ ${bundle}
   let showTrails = true;
 
   function drawScene(ctx, state, trails, paneLabel, isSource) {
+    // Ensure canvas buffer matches its display size (fixes mobile
+    // where CSS width:100% resizes the element but the buffer stays
+    // at the HTML attribute value, causing a mismatch).
+    const canvas = ctx.canvas;
+    const displayW = canvas.clientWidth;
+    const displayH = canvas.clientHeight;
+    if (displayW > 0 && displayH > 0 && (canvas.width !== displayW || canvas.height !== displayH)) {
+      canvas.width = displayW;
+      canvas.height = displayH;
+    }
+    const cw = canvas.width;
+    const ch = canvas.height;
+    const scaleX = cw / W;
+    const scaleY = ch / H;
+    ctx.save();
+    ctx.scale(scaleX, scaleY);
+
     // Background.
     ctx.fillStyle = "#0e1116";
     ctx.fillRect(0, 0, W, H);
@@ -797,6 +814,7 @@ ${bundle}
         ctx.fillText(line, 10, H - 10 - (take.length - 1 - i) * 14);
       }
     }
+    ctx.restore();
   }
 
   /* main loop -------------------------------------------------------- */

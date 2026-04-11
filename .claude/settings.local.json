@@ -63,7 +63,8 @@
       "Bash(start \"\" \"examples/mirror/index.html\")",
       "Bash(cygpath -w examples/mirror/index.html)",
       "Bash(start \"\" \"msedge\" \"--remote-debugging-port=9233\" \"--no-first-run\" \"--no-default-browser-check\" \"--user-data-dir=C:/temp/remjs-shuf\" \"file:///$\\(cygpath -w examples/mirror/index.html)",
-      "Bash(start \"\" \"msedge\" \"--remote-debugging-port=9233\" \"--no-first-run\" \"--no-default-browser-check\" \"--user-data-dir=C:/temp/remjs-shuf2\" \"file:///C:/Users/rlyshw.TOASTER/Development/claude/remjs/examples/mirror/index.html\")"
+      "Bash(start \"\" \"msedge\" \"--remote-debugging-port=9233\" \"--no-first-run\" \"--no-default-browser-check\" \"--user-data-dir=C:/temp/remjs-shuf2\" \"file:///C:/Users/rlyshw.TOASTER/Development/claude/remjs/examples/mirror/index.html\")",
+      "Bash(grep -n \"^  }$\" scripts/build-mirror.mjs)"
     ]
   }
 }
