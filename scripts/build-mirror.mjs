@@ -72,7 +72,9 @@ canvas{display:block;width:100%;height:100%;cursor:crosshair;background:#06080d}
 .ot.launch{color:#f0c040}.ot.random{color:#bc8cff}
 .opf{padding:4px 8px;border-top:1px solid #30363d;font-family:var(--m);font-size:.55rem;color:#8b949e;display:flex;justify-content:space-between;background:#0d1117;border-radius:0 0 6px 6px}
 .ig{font-weight:700}.ig.ok{color:#3fb950}.ig.bad{color:#f85149}
-@media(max-width:800px){.layout{grid-template-columns:1fr 1fr;grid-template-rows:1fr 180px}.opp{grid-column:1/-1}}
+@media(max-width:900px){.layout{grid-template-columns:1fr 1fr;grid-template-rows:1fr 200px}.opp{grid-column:1/-1}}
+@media(max-width:500px){.layout{grid-template-columns:1fr;grid-template-rows:auto 160px auto;height:auto;min-height:0}
+  canvas{aspect-ratio:4/3;height:auto}}
 </style></head><body>
 <h1>remjs mirror — shuffleboard</h1>
 <p class="hint">Click left canvas to launch. Each click emits a <code>random</code> op (puck color) + <code>launch</code> op (aim). Ops flow to the right canvas. <strong>Pause</strong> to queue them, <strong>Step</strong> to replay one at a time.</p>
