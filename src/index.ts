@@ -34,4 +34,4 @@ export type { Recorder, RecorderOptions, BatchMode } from "./recorder.js";
 
 // Player
 export { createPlayer } from "./player.js";
-export type { Player, PlayerOptions } from "./player.js";
+export type { Player, PlayerOptions, ReplayMode } from "./player.js";

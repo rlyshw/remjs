@@ -9,12 +9,18 @@
  * All ops are plain JSON — no tagged values, no __remjs encoding.
  * The event loop input surface is made of primitives, strings, and
  * simple structures that survive JSON round-trip without special handling.
+ *
+ * Every op carries an optional `ts` field — the wall clock time
+ * (performance.now or Date.now) when the op was recorded. This enables
+ * temporal replay: ops are replayed at their original cadence rather
+ * than all at once.
  */
 
 /* ── DOM Events ─────────────────────────────────────────────────── */
 
 export interface EventOp {
   type: "event";
+  ts?: number;
   eventType: string;
   targetPath: string;
   timestamp: number;
@@ -25,6 +31,7 @@ export interface EventOp {
 
 export interface TimerOp {
   type: "timer";
+  ts?: number;
   kind: "timeout" | "interval" | "raf" | "idle";
   seq: number;
   scheduledDelay: number;
@@ -35,6 +42,7 @@ export interface TimerOp {
 
 export interface NetworkOp {
   type: "network";
+  ts?: number;
   kind: "fetch" | "xhr" | "websocket";
   seq: number;
   url: string;
@@ -48,6 +56,7 @@ export interface NetworkOp {
 
 export interface RandomOp {
   type: "random";
+  ts?: number;
   source: "math" | "crypto";
   values: number[];
 }
@@ -56,6 +65,7 @@ export interface RandomOp {
 
 export interface ClockOp {
   type: "clock";
+  ts?: number;
   source: "dateNow" | "performanceNow" | "dateConstructor";
   value: number;
 }
@@ -64,6 +74,7 @@ export interface ClockOp {
 
 export interface StorageOp {
   type: "storage";
+  ts?: number;
   kind: "local" | "session";
   action: "get" | "set" | "remove";
   key: string;
@@ -74,6 +85,7 @@ export interface StorageOp {
 
 export interface NavigationOp {
   type: "navigation";
+  ts?: number;
   kind: "popstate" | "hashchange" | "pushState" | "replaceState";
   url: string;
   state?: unknown;
@@ -95,6 +107,7 @@ export interface PendingNetwork {
 
 export interface SnapshotOp {
   type: "snapshot";
+  ts?: number;
   html: string;
   url: string;
   timestamp: number;

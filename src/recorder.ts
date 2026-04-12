@@ -71,8 +71,16 @@ export function createRecorder(options: RecorderOptions): Recorder {
     }
   };
 
+  // Capture the ORIGINAL time functions BEFORE patches are installed,
+  // so timestamping ops doesn't recurse through the clock patch.
+  const origPerfNow = typeof performance !== "undefined"
+    ? performance.now.bind(performance) : null;
+  const origDateNow = Date.now;
+  const getTime = origPerfNow ?? (() => origDateNow.call(Date));
+
   const emit = (op: Op): void => {
     if (!running) return;
+    (op as { ts?: number }).ts = getTime();
     pending.push(op);
     schedule();
   };

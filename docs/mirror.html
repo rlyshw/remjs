@@ -55,6 +55,11 @@ canvas{display:block;width:100%;height:100%;cursor:crosshair;background:#06080d}
  * All ops are plain JSON — no tagged values, no __remjs encoding.
  * The event loop input surface is made of primitives, strings, and
  * simple structures that survive JSON round-trip without special handling.
+ *
+ * Every op carries an optional `ts` field — the wall clock time
+ * (performance.now or Date.now) when the op was recorded. This enables
+ * temporal replay: ops are replayed at their original cadence rather
+ * than all at once.
  */
 
 /**
@@ -489,9 +494,16 @@ function createRecorder(options) {
             queueMicrotask(flush);
         }
     };
+    // Capture the ORIGINAL time functions BEFORE patches are installed,
+    // so timestamping ops doesn't recurse through the clock patch.
+    const origPerfNow = typeof performance !== "undefined"
+        ? performance.now.bind(performance) : null;
+    const origDateNow = Date.now;
+    const getTime = origPerfNow ?? (() => origDateNow.call(Date));
     const emit = (op) => {
         if (!running)
             return;
+        op.ts = getTime();
         pending.push(op);
         schedule();
     };
@@ -548,16 +560,26 @@ function createRecorder(options) {
 /**
  * Player — replays event loop ops on a follower runtime.
  *
+ * Two replay modes:
+ *   - "temporal" (default): ops are replayed at their original cadence
+ *     using the `ts` field on each op. Preserves the timing of the
+ *     original execution.
+ *   - "instant": ops are applied immediately. Useful for fast-forward
+ *     or catching up a late joiner.
+ *
  * Monkey-patches globals on the follower so that Math.random(),
- * Date.now(), fetch(), etc. return recorded values. DOM events
- * are dispatched to the correct elements via CSS selector paths.
+ * Date.now(), fetch(), etc. return recorded values.
  */
 function createPlayer(options = {}) {
-    const { events: enableEvents = true, timers: enableTimers = true, network: enableNetwork = true, random: enableRandom = true, clock: enableClock = true, storage: enableStorage = true, } = options;
+    const { mode = "temporal", events: enableEvents = true, timers: enableTimers = true, network: enableNetwork = true, random: enableRandom = true, clock: enableClock = true, storage: enableStorage = true, } = options;
     // Queues for deterministic value replay
     const randomQueue = [];
     const clockQueue = [];
     const fetchQueue = new Map();
+    // Temporal replay state
+    const pendingTimers = [];
+    let baseTs = null; // first op's ts in current batch
+    let baseNow = null; // wall time when we started replaying
     // Save originals for cleanup
     const origRandom = Math.random;
     const origDateNow = Date.now;
@@ -583,7 +605,6 @@ function createPlayer(options = {}) {
         }
         if (enableNetwork) {
             globalThis.fetch = async function (input, init) {
-                // Check if we have a queued response for this request
                 for (const [seq, entry] of fetchQueue) {
                     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
                     if (entry.op.url === url) {
@@ -594,9 +615,32 @@ function createPlayer(options = {}) {
                         });
                     }
                 }
-                // No recorded response — fall through to real fetch
                 return origFetch.call(globalThis, input, init);
             };
+        }
+    }
+    function applyOp(op) {
+        switch (op.type) {
+            case "event":
+                applyEvent(op);
+                break;
+            case "timer": break; // let native timers fire
+            case "network":
+                applyNetwork(op);
+                break;
+            case "random":
+                applyRandom(op);
+                break;
+            case "clock":
+                applyClock(op);
+                break;
+            case "storage":
+                applyStorage(op);
+                break;
+            case "snapshot":
+                applySnapshot(op);
+                break;
+            case "navigation": break;
         }
     }
     function applyEvent(op) {
@@ -611,34 +655,25 @@ function createPlayer(options = {}) {
         const d = op.detail;
         if (op.eventType.startsWith("pointer")) {
             event = new PointerEvent(op.eventType, {
-                bubbles: true,
-                cancelable: true,
-                clientX: d.clientX,
-                clientY: d.clientY,
-                button: d.button,
-                buttons: d.buttons,
+                bubbles: true, cancelable: true,
+                clientX: d.clientX, clientY: d.clientY,
+                button: d.button, buttons: d.buttons,
                 pointerId: d.pointerId ?? 1,
             });
         }
         else if (op.eventType.startsWith("mouse") || op.eventType === "click" || op.eventType === "dblclick") {
             event = new MouseEvent(op.eventType, {
-                bubbles: true,
-                cancelable: true,
-                clientX: d.clientX,
-                clientY: d.clientY,
+                bubbles: true, cancelable: true,
+                clientX: d.clientX, clientY: d.clientY,
                 button: d.button,
             });
         }
         else if (op.eventType.startsWith("key")) {
             event = new KeyboardEvent(op.eventType, {
-                bubbles: true,
-                cancelable: true,
-                key: d.key,
-                code: d.code,
-                altKey: d.altKey,
-                ctrlKey: d.ctrlKey,
-                shiftKey: d.shiftKey,
-                metaKey: d.metaKey,
+                bubbles: true, cancelable: true,
+                key: d.key, code: d.code,
+                altKey: d.altKey, ctrlKey: d.ctrlKey,
+                shiftKey: d.shiftKey, metaKey: d.metaKey,
             });
         }
         else if (op.eventType === "input" || op.eventType === "change") {
@@ -652,21 +687,10 @@ function createPlayer(options = {}) {
         }
         target.dispatchEvent(event);
     }
-    function applyTimer(_op) {
-        // Timer replay: the follower's code registered the same timers
-        // in the same order. When a TimerOp arrives, we just let the
-        // follower's native timer fire naturally — the seq numbers
-        // ensure ordering consistency. For more precise control, the
-        // timer patch on the follower side would intercept and fire
-        // callbacks by seq. This is deferred to a future refinement.
-    }
     function applyNetwork(op) {
         if (!enableNetwork)
             return;
-        fetchQueue.set(op.seq, {
-            resolve: () => { },
-            op,
-        });
+        fetchQueue.set(op.seq, { resolve: () => { }, op });
     }
     function applyRandom(op) {
         if (!enableRandom)
@@ -686,13 +710,10 @@ function createPlayer(options = {}) {
             : (typeof sessionStorage !== "undefined" ? sessionStorage : null);
         if (!storage)
             return;
-        if (op.action === "set" && op.value !== null) {
+        if (op.action === "set" && op.value !== null)
             storage.setItem(op.key, op.value);
-        }
-        else if (op.action === "remove") {
+        else if (op.action === "remove")
             storage.removeItem(op.key);
-        }
-        // "get" ops are informational — no action needed on replay
     }
     function applySnapshot(op) {
         if (typeof document === "undefined")
@@ -701,34 +722,40 @@ function createPlayer(options = {}) {
     }
     function apply(ops) {
         install();
+        if (mode === "instant" || ops.length === 0) {
+            for (const op of ops)
+                applyOp(op);
+            return;
+        }
+        // Temporal replay: schedule each op at its original relative time
+        const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+        // Find the earliest ts in this batch as the reference point
+        let minTs = Infinity;
         for (const op of ops) {
-            switch (op.type) {
-                case "event":
-                    applyEvent(op);
-                    break;
-                case "timer":
-                    applyTimer(op);
-                    break;
-                case "network":
-                    applyNetwork(op);
-                    break;
-                case "random":
-                    applyRandom(op);
-                    break;
-                case "clock":
-                    applyClock(op);
-                    break;
-                case "storage":
-                    applyStorage(op);
-                    break;
-                case "snapshot":
-                    applySnapshot(op);
-                    break;
-                case "navigation": break; // deferred
+            if (op.ts !== undefined && op.ts < minTs)
+                minTs = op.ts;
+        }
+        // If no timestamps, fall back to instant
+        if (minTs === Infinity) {
+            for (const op of ops)
+                applyOp(op);
+            return;
+        }
+        for (const op of ops) {
+            const delay = op.ts !== undefined ? op.ts - minTs : 0;
+            if (delay <= 0) {
+                applyOp(op);
+            }
+            else {
+                const timer = setTimeout(() => applyOp(op), delay);
+                pendingTimers.push(timer);
             }
         }
     }
     function destroy() {
+        for (const t of pendingTimers)
+            clearTimeout(t);
+        pendingTimers.length = 0;
         if (!installed)
             return;
         installed = false;
@@ -800,9 +827,10 @@ var sc=document.getElementById("S").getContext("2d"),mc=document.getElementById(
 var $ol=document.getElementById("ol"),$qc=document.getElementById("qc"),$ac=document.getElementById("ac"),$ig=document.getElementById("ig");
 var $pp=document.getElementById("pp");
 
-var ops=[],pend=[],ac=0,paused=false;
+var ops=[],pend=[],ac=0,paused=false,draining=false,drainTimers=[];
 
 function addOp(o){
+  o.ts=performance.now();
   ops.push(o);pend.push(o);
   var r=document.createElement("div");r.className="orow pend";
   var tc=o.type==="launch"?"launch":"random";
@@ -815,12 +843,39 @@ function applyOne(){
   if(o.type==="launch")M.launch(o.x,o.y,o.hue);
   ac++;var r=document.getElementById("o"+ac);if(r)r.className="orow done";upd();return true;
 }
-function applyAll(){while(pend.length)applyOne()}
+// Temporal drain: replay ops at their original cadence
+function drainTemporal(){
+  if(!pend.length){draining=false;return;}
+  draining=true;
+  var base=pend[0].ts||0;
+  var now=performance.now();
+  for(var i=0;i<pend.length;i++){
+    var delay=(pend[i].ts||0)-base;
+    (function(idx){
+      var t=setTimeout(function(){
+        // Apply this specific op
+        var o=pend[idx];
+        if(o.type==="launch")M.launch(o.x,o.y,o.hue);
+        ac++;var r=document.getElementById("o"+ac);if(r)r.className="orow done";upd();
+        if(idx===pend.length-1){pend=[];draining=false;upd();}
+      },delay);
+      drainTimers.push(t);
+    })(i);
+  }
+}
+function cancelDrain(){for(var t of drainTimers)clearTimeout(t);drainTimers=[];draining=false;}
+function applyAllInstant(){while(pend.length)applyOne()}
 function upd(){$qc.textContent=pend.length;$ac.textContent=ac}
 
-$pp.onclick=function(){paused=!paused;$pp.textContent=paused?"play":"| |";$pp.classList.toggle("on",paused)};
-document.getElementById("st").onclick=function(){if(!paused){paused=true;$pp.textContent="play";$pp.classList.add("on")}applyOne()};
-document.getElementById("rs").onclick=function(){S=mk();M=mk();ops=[];pend=[];ac=0;$ol.innerHTML="";upd()};
+$pp.onclick=function(){
+  paused=!paused;$pp.textContent=paused?"play":"| |";$pp.classList.toggle("on",paused);
+  if(!paused&&pend.length&&!draining)drainTemporal();
+};
+document.getElementById("st").onclick=function(){
+  if(!paused){paused=true;$pp.textContent="play";$pp.classList.add("on");cancelDrain();}
+  applyOne();
+};
+document.getElementById("rs").onclick=function(){cancelDrain();S=mk();M=mk();ops=[];pend=[];ac=0;$ol.innerHTML="";upd()};
 
 var cv=document.getElementById("S"),dg=null;
 function xy(e){var r=cv.getBoundingClientRect();return{x:(e.clientX-r.left)/r.width*W,y:(e.clientY-r.top)/r.height*H}}
@@ -828,11 +883,14 @@ cv.addEventListener("pointerdown",function(e){dg=xy(e);cv.setPointerCapture(e.po
 cv.addEventListener("pointermove",function(e){if(dg)dg=xy(e)});
 cv.addEventListener("pointerup",function(){if(!dg)return;var a=dg;dg=null;
   var hue=Math.floor(Math.random()*360);S.launch(a.x,a.y,hue);
-  addOp({type:"random",value:hue});addOp({type:"launch",x:a.x,y:a.y,hue:hue})});
+  addOp({type:"random",value:hue});addOp({type:"launch",x:a.x,y:a.y,hue:hue});
+  // In play mode, apply immediately (real-time)
+  if(!paused)applyAllInstant();
+});
 cv.addEventListener("pointercancel",function(){dg=null});
 
 function loop(){
-  S.step();if(!paused)applyAll();M.step();
+  S.step();M.step();
   dr(sc,S,true);dr(mc,M,false);
   var ok=S.pk.length===M.pk.length;
   if(ok)for(var i=0;i<S.pk.length;i++){var a=S.pk[i],b=M.pk[i];if(Math.abs(a.x-b.x)>.01||Math.abs(a.y-b.y)>.01){ok=false;break}}

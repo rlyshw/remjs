@@ -8,7 +8,7 @@ describe("player", () => {
   });
 
   it("replays random values", () => {
-    const player = createPlayer({ events: false, timers: false, network: false, clock: false, storage: false, random: true });
+    const player = createPlayer({ mode: "instant", events: false, timers: false, network: false, clock: false, storage: false, random: true });
 
     const op: RandomOp = { type: "random", source: "math", values: [0.111, 0.222, 0.333] };
     player.apply([op]);
@@ -25,7 +25,7 @@ describe("player", () => {
   });
 
   it("replays clock values", () => {
-    const player = createPlayer({ events: false, timers: false, network: false, random: false, storage: false, clock: true });
+    const player = createPlayer({ mode: "instant", events: false, timers: false, network: false, random: false, storage: false, clock: true });
 
     const op: ClockOp = { type: "clock", source: "dateNow", value: 1700000000000 };
     player.apply([op]);
@@ -50,7 +50,7 @@ describe("player", () => {
       get length() { return store.size; },
     };
 
-    const player = createPlayer({ events: false, timers: false, network: false, random: false, clock: false, storage: true });
+    const player = createPlayer({ mode: "instant", events: false, timers: false, network: false, random: false, clock: false, storage: true });
 
     const op: StorageOp = { type: "storage", kind: "local", action: "set", key: "theme", value: "dark" };
     player.apply([op]);
@@ -61,7 +61,7 @@ describe("player", () => {
   });
 
   it("queues network responses for fetch replay", async () => {
-    const player = createPlayer({ events: false, timers: false, random: false, clock: false, storage: false, network: true });
+    const player = createPlayer({ mode: "instant", events: false, timers: false, random: false, clock: false, storage: false, network: true });
 
     const op: NetworkOp = {
       type: "network",
@@ -84,7 +84,7 @@ describe("player", () => {
   });
 
   it("handles multiple ops in sequence", () => {
-    const player = createPlayer({ events: false, timers: false, network: false, storage: false });
+    const player = createPlayer({ mode: "instant", events: false, timers: false, network: false, storage: false });
 
     player.apply([
       { type: "random", source: "math", values: [0.5] },
@@ -103,7 +103,7 @@ describe("player", () => {
     const origRandom = Math.random;
     const origDateNow = Date.now;
 
-    const player = createPlayer({ events: false, timers: false, network: false, storage: false });
+    const player = createPlayer({ mode: "instant", events: false, timers: false, network: false, storage: false });
     player.apply([{ type: "random", source: "math", values: [0.1] }]);
 
     expect(Math.random).not.toBe(origRandom);

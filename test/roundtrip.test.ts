@@ -27,6 +27,7 @@ describe("end-to-end roundtrip", () => {
 
     // Replay
     const player = createPlayer({
+      mode: "instant",
       events: false,
       timers: false,
       network: false,
@@ -104,6 +105,7 @@ describe("end-to-end roundtrip", () => {
     const decoded = jsonCodec.decodeBatch(wire);
 
     const player = createPlayer({
+      mode: "instant",
       events: false,
       timers: false,
       network: false,
