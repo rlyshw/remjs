@@ -12,6 +12,7 @@ import { installRandomPatch } from "./patches/random.js";
 import { installTimerPatch } from "./patches/timers.js";
 import { installNetworkPatch } from "./patches/network.js";
 import { installStoragePatch } from "./patches/storage.js";
+import { installEventPatch } from "./patches/events.js";
 
 export type BatchMode = "raf" | "microtask" | "sync";
 
@@ -96,13 +97,8 @@ export function createRecorder(options: RecorderOptions): Recorder {
     if (enableStorage) {
       uninstallers.push(installStoragePatch(emit));
     }
-    // Event patch requires DOM — install only if EventTarget exists
     if (enableEvents && typeof EventTarget !== "undefined") {
-      import("./patches/events.js").then(({ installEventPatch }) => {
-        if (running) {
-          uninstallers.push(installEventPatch(emit));
-        }
-      });
+      uninstallers.push(installEventPatch(emit));
     }
   }
 
