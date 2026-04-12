@@ -322,7 +322,7 @@ const MIRROR_PAGE = (gameHtml) => `<!doctype html>
   </div>
   <script>
     // Use blob: URLs instead of srcdoc so postMessage works across origins
-    var gameHtml = ${JSON.stringify(gameHtml)};
+    var gameHtml = ${safeJsonEmbed(gameHtml)};
     var followerHtml = gameHtml.replace("</head>", "<script>window.__remjs_follower=true;<\\/script></head>");
     var sourceBlob = new Blob([gameHtml], {type: "text/html"});
     var mirrorBlob = new Blob([followerHtml], {type: "text/html"});
@@ -342,6 +342,11 @@ const MIRROR_PAGE = (gameHtml) => `<!doctype html>
 
 function escapeAttr(s) {
   return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/** JSON.stringify that's safe to embed inside a <script> tag. */
+function safeJsonEmbed(s) {
+  return JSON.stringify(s).replace(/<\/script>/gi, "<\\/script>");
 }
 
 /* ── Embed page (for landing page iframe) ─────────────────────── */
@@ -378,7 +383,7 @@ const EMBED_PAGE = (gameHtml) => `<!doctype html>
     </div>
   </div>
   <script>
-    var gameHtml = ${JSON.stringify(gameHtml)};
+    var gameHtml = ${safeJsonEmbed(gameHtml)};
     var followerHtml = gameHtml.replace("</head>", "<script>window.__remjs_follower=true;<\\/script></head>");
     document.getElementById("sourceFrame").src = URL.createObjectURL(new Blob([gameHtml], {type:"text/html"}));
     document.getElementById("mirrorFrame").src = URL.createObjectURL(new Blob([followerHtml], {type:"text/html"}));
