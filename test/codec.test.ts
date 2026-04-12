@@ -1,94 +1,114 @@
 import { describe, it, expect } from "vitest";
-import { encode, decode } from "../src/codec.js";
+import { jsonCodec } from "../src/codec.js";
+import type { Op, EventOp, TimerOp, NetworkOp, RandomOp, ClockOp, StorageOp, NavigationOp, SnapshotOp } from "../src/ops.js";
 
-describe("codec round-trips", () => {
-  const cases: [string, unknown][] = [
-    ["null", null],
-    ["string", "hello"],
-    ["number", 42],
-    ["boolean", true],
-    ["zero", 0],
-    ["negative", -7.5],
-    ["empty object", {}],
-    ["empty array", []],
-    ["nested object", { a: { b: { c: 1 } } }],
-    ["nested array", [[1, 2], [3, 4]]],
-    ["mixed", { list: [1, { x: "y" }], name: "hi" }],
-  ];
-
-  for (const [label, value] of cases) {
-    it(`round-trips ${label}`, () => {
-      expect(decode(encode(value))).toEqual(value);
-    });
-  }
-
-  it("round-trips undefined", () => {
-    expect(decode(encode(undefined))).toBe(undefined);
-  });
-
-  it("round-trips NaN / Infinity / -Infinity", () => {
-    expect(decode(encode(NaN))).toBeNaN();
-    expect(decode(encode(Infinity))).toBe(Infinity);
-    expect(decode(encode(-Infinity))).toBe(-Infinity);
-  });
-
-  it("round-trips Date", () => {
-    const d = new Date("2025-01-15T10:30:00Z");
-    const out = decode(encode(d)) as Date;
-    expect(out).toBeInstanceOf(Date);
-    expect(out.getTime()).toBe(d.getTime());
-  });
-
-  it("round-trips RegExp", () => {
-    const r = /foo[a-z]+/gi;
-    const out = decode(encode(r)) as RegExp;
-    expect(out).toBeInstanceOf(RegExp);
-    expect(out.source).toBe(r.source);
-    expect(out.flags).toBe(r.flags);
-  });
-
-  it("round-trips BigInt", () => {
-    const b = 123456789012345678901234567890n;
-    expect(decode(encode(b))).toBe(b);
-  });
-
-  it("round-trips Map", () => {
-    const m = new Map<string, unknown>([
-      ["a", 1],
-      ["b", { nested: true }],
-    ]);
-    const out = decode(encode(m)) as Map<string, unknown>;
-    expect(out).toBeInstanceOf(Map);
-    expect(out.size).toBe(2);
-    expect(out.get("a")).toBe(1);
-    expect(out.get("b")).toEqual({ nested: true });
-  });
-
-  it("round-trips Set", () => {
-    const s = new Set([1, 2, 3, "x"]);
-    const out = decode(encode(s)) as Set<unknown>;
-    expect(out).toBeInstanceOf(Set);
-    expect(out.size).toBe(4);
-    expect(out.has(1)).toBe(true);
-    expect(out.has("x")).toBe(true);
-  });
-
-  it("round-trips JSON through a codec → JSON.stringify → JSON.parse → decode", () => {
-    const original = {
-      name: "Alice",
-      created: new Date(2024, 0, 1),
-      tags: new Set(["admin", "user"]),
-      meta: new Map<string, number>([["version", 2]]),
-      bigNumber: 10n ** 20n,
+describe("jsonCodec", () => {
+  it("round-trips an EventOp", () => {
+    const op: EventOp = {
+      type: "event",
+      eventType: "click",
+      targetPath: "div#root > button:nth-child(2)",
+      timestamp: 1234567890.5,
+      detail: { clientX: 100, clientY: 200, button: 0 },
     };
-    const wire = JSON.parse(JSON.stringify(encode(original)));
-    const restored = decode(wire) as typeof original;
-    expect(restored.name).toBe("Alice");
-    expect((restored.created as Date).getTime()).toBe(original.created.getTime());
-    expect(restored.tags).toBeInstanceOf(Set);
-    expect((restored.tags as Set<string>).has("admin")).toBe(true);
-    expect(restored.meta).toBeInstanceOf(Map);
-    expect((restored.meta as Map<string, number>).get("version")).toBe(2);
-    expect(restored.bigNumber).toBe(original.bigNumber);
+    expect(jsonCodec.decode(jsonCodec.encode(op))).toEqual(op);
+  });
+
+  it("round-trips a TimerOp", () => {
+    const op: TimerOp = {
+      type: "timer",
+      kind: "timeout",
+      seq: 3,
+      scheduledDelay: 1000,
+      actualTime: 1234568890.5,
+    };
+    expect(jsonCodec.decode(jsonCodec.encode(op))).toEqual(op);
+  });
+
+  it("round-trips a NetworkOp", () => {
+    const op: NetworkOp = {
+      type: "network",
+      kind: "fetch",
+      seq: 1,
+      url: "https://api.example.com/data",
+      method: "GET",
+      status: 200,
+      headers: { "content-type": "application/json" },
+      body: '{"items":[1,2,3]}',
+    };
+    expect(jsonCodec.decode(jsonCodec.encode(op))).toEqual(op);
+  });
+
+  it("round-trips a RandomOp", () => {
+    const op: RandomOp = {
+      type: "random",
+      source: "math",
+      values: [0.123456, 0.789012, 0.345678],
+    };
+    expect(jsonCodec.decode(jsonCodec.encode(op))).toEqual(op);
+  });
+
+  it("round-trips a ClockOp", () => {
+    const op: ClockOp = {
+      type: "clock",
+      source: "dateNow",
+      value: 1712345678000,
+    };
+    expect(jsonCodec.decode(jsonCodec.encode(op))).toEqual(op);
+  });
+
+  it("round-trips a StorageOp", () => {
+    const op: StorageOp = {
+      type: "storage",
+      kind: "local",
+      action: "set",
+      key: "user-pref",
+      value: '{"theme":"dark"}',
+    };
+    expect(jsonCodec.decode(jsonCodec.encode(op))).toEqual(op);
+  });
+
+  it("round-trips a NavigationOp", () => {
+    const op: NavigationOp = {
+      type: "navigation",
+      kind: "pushState",
+      url: "/page/2",
+      state: { page: 2 },
+    };
+    expect(jsonCodec.decode(jsonCodec.encode(op))).toEqual(op);
+  });
+
+  it("round-trips a SnapshotOp", () => {
+    const op: SnapshotOp = {
+      type: "snapshot",
+      html: "<html><body>hello</body></html>",
+      url: "http://localhost:3000",
+      timestamp: 1712345678000,
+      pendingTimers: [{ seq: 0, kind: "interval", remainingDelay: 500 }],
+      pendingNetwork: [{ seq: 1, url: "https://api.example.com", method: "GET" }],
+    };
+    expect(jsonCodec.decode(jsonCodec.encode(op))).toEqual(op);
+  });
+
+  it("round-trips a batch of mixed ops", () => {
+    const ops: Op[] = [
+      { type: "clock", source: "dateNow", value: 1000 },
+      { type: "random", source: "math", values: [0.5] },
+      { type: "event", eventType: "click", targetPath: "button", timestamp: 1001, detail: {} },
+      { type: "timer", kind: "timeout", seq: 0, scheduledDelay: 100, actualTime: 1100 },
+    ];
+    expect(jsonCodec.decodeBatch(jsonCodec.encodeBatch(ops))).toEqual(ops);
+  });
+
+  it("handles NetworkOp with null body", () => {
+    const op: NetworkOp = {
+      type: "network",
+      kind: "fetch",
+      seq: 0,
+      url: "https://example.com",
+      status: 204,
+      body: null,
+    };
+    expect(jsonCodec.decode(jsonCodec.encode(op))).toEqual(op);
   });
 });

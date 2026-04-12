@@ -1,7 +1,7 @@
 {
   "name": "remjs",
-  "version": "0.1.0",
-  "description": "Streaming JavaScript state serialization — encode JS heap deltas as structured ops",
+  "version": "0.3.0",
+  "description": "Event loop replication — serialize JS program execution as structured ops",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

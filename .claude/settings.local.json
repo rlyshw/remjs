@@ -64,7 +64,24 @@
       "Bash(cygpath -w examples/mirror/index.html)",
       "Bash(start \"\" \"msedge\" \"--remote-debugging-port=9233\" \"--no-first-run\" \"--no-default-browser-check\" \"--user-data-dir=C:/temp/remjs-shuf\" \"file:///$\\(cygpath -w examples/mirror/index.html)",
       "Bash(start \"\" \"msedge\" \"--remote-debugging-port=9233\" \"--no-first-run\" \"--no-default-browser-check\" \"--user-data-dir=C:/temp/remjs-shuf2\" \"file:///C:/Users/rlyshw.TOASTER/Development/claude/remjs/examples/mirror/index.html\")",
-      "Bash(grep -n \"^  }$\" scripts/build-mirror.mjs)"
+      "Bash(grep -n \"^  }$\" scripts/build-mirror.mjs)",
+      "Bash(where cloudflared:*)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:7500/examples/counter.html)",
+      "Bash(cloudflared tunnel:*)",
+      "Bash(taskkill //F //IM node.exe)",
+      "Bash(taskkill //F //IM cloudflared.exe)",
+      "Bash(curl -s http://localhost:7500/proxy?url=http://localhost:7500/examples/counter.js)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:7500/)",
+      "Bash(curl -s \"http://localhost:7500/?http://localhost:7500/examples/react-tictactoe.html\")",
+      "Bash(curl -s \"http://localhost:7500/proxy?url=http://localhost:7500/examples/react-tictactoe.js\")",
+      "Bash(where msedge:*)",
+      "Read(//c/Program Files \\(x86\\)/Microsoft/Edge/Application/**)",
+      "Read(//c/Program Files/Microsoft/Edge/Application/**)",
+      "Bash(\"/c/Program Files \\(x86\\)/Microsoft/Edge/Application/msedge.exe\" --remote-debugging-port=9222 --headless=new --disable-gpu \"http://localhost:7500/?http://localhost:7500/examples/react-tictactoe.html\")",
+      "Bash(curl -s http://localhost:9222/json)",
+      "Bash(taskkill //F //IM msedge.exe)",
+      "Bash(rm -f src/proxy.ts src/proxy-symbol.ts src/registry.ts src/apply.ts src/observer.ts src/stream.ts)",
+      "Bash(rm -f test/proxy.test.ts test/registry.test.ts test/observer.test.ts test/graph.test.ts test/batching.test.ts test/roundtrip.test.ts)"
     ]
   }
 }
