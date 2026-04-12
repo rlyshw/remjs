@@ -175,6 +175,12 @@ function encodeInner(value: unknown, opts: EncodeOptions, mode: EncodeMode): Enc
     return out;
   }
 
+  // Functions and symbols can't be serialized — encode as a tagged
+  // placeholder so they're skipped gracefully rather than crashing.
+  if (t === "function" || t === "symbol") {
+    return { [TAG]: "undef" };
+  }
+
   throw new Error(`remjs: cannot encode value of type ${t}`);
 }
 

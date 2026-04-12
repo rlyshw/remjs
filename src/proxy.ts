@@ -102,6 +102,10 @@ function wrapObject<T extends object>(
       const value = Reflect.get(t, prop, receiver);
       if (typeof prop === "symbol") return value;
       if (isWrappable(value)) {
+        // Non-configurable properties must return the exact target value
+        // to satisfy the Proxy invariant (e.g. React element `_store`).
+        const desc = Object.getOwnPropertyDescriptor(t, prop);
+        if (desc && !desc.configurable && !desc.writable) return value;
         return wrap(value as object, registry, emit);
       }
       return value;
