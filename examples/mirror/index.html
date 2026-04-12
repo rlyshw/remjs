@@ -859,27 +859,33 @@ function applyOne(){
 function drainTemporal(){
   if(!pend.length){draining=false;return;}
   draining=true;
-  // Snapshot the queue — don't reference pend by index during async drain
-  var batch=pend.slice();
+  // Split: frame ops apply instantly (latest wins), input ops get temporal pacing
+  var inputs=[], lastFrame=null;
+  for(var i=0;i<pend.length;i++){
+    if(pend[i].type==="frame"){lastFrame=pend[i];ac++;}
+    else inputs.push(pend[i]);
+  }
   pend=[];
-  var base=batch[0].ts||0;
+  // Apply the latest frame immediately so the mirror catches up visually
+  if(lastFrame)mirrorFrame=lastFrame;
+  // Schedule input ops at original tempo
+  if(!inputs.length){draining=false;upd();return;}
+  var base=inputs[0].ts||0;
   var applied=0;
-  for(var i=0;i<batch.length;i++){
-    var delay=(batch[i].ts||0)-base;
+  for(var i=0;i<inputs.length;i++){
+    var delay=(inputs[i].ts||0)-base;
     (function(op){
       var t=setTimeout(function(){
-        if(op.type==="frame")mirrorFrame=op;
         ac++;var r=document.getElementById("o"+ac);if(r)r.className="orow done";
         applied++;
-        if(applied===batch.length){
+        if(applied===inputs.length){
           draining=false;
-          // Flush any ops that arrived during the drain
           if(!paused)applyAllInstant();
         }
         upd();
       },delay);
       drainTimers.push(t);
-    })(batch[i]);
+    })(inputs[i]);
   }
 }
 function cancelDrain(){for(var t of drainTimers)clearTimeout(t);drainTimers=[];draining=false;}
