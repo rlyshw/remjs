@@ -822,40 +822,50 @@ function dr(cx,g,src){
   cx.fillText(String(g.sc()),W-8,6);cx.font="9px sans-serif";cx.fillStyle="#8b949e";cx.fillText("score",W-8,26);
 }
 
-var S=mk(),M=mk();
+var S=mk();
 var sc=document.getElementById("S").getContext("2d"),mc=document.getElementById("M").getContext("2d");
 var $ol=document.getElementById("ol"),$qc=document.getElementById("qc"),$ac=document.getElementById("ac"),$ig=document.getElementById("ig");
 var $pp=document.getElementById("pp");
+
+// Mirror state: just the last frame snapshot received. No game logic.
+var mirrorFrame=null; // {pucks:[{x,y,id,cl,st,pt}...], score:0}
 
 var ops=[],pend=[],ac=0,paused=false,draining=false,drainTimers=[];
 
 function addOp(o){
   o.ts=performance.now();
   ops.push(o);pend.push(o);
-  var r=document.createElement("div");r.className="orow pend";
-  var tc=o.type==="launch"?"launch":"random";
-  var dt=o.type==="launch"?"x:"+Math.round(o.x)+" y:"+Math.round(o.y)+" hue:"+o.hue:"hue = "+o.value;
-  r.innerHTML='<span class="ot '+tc+'">'+o.type+"</span> "+dt;
-  r.id="o"+ops.length;$ol.appendChild(r);$ol.scrollTop=$ol.scrollHeight;upd();
+  // Only show input ops in the log (not frame snapshots — too noisy at 60fps)
+  if(o.type!=="frame"){
+    var r=document.createElement("div");r.className="orow pend";
+    var tc=o.type;
+    var dt="";
+    if(o.type==="launch")dt="x:"+Math.round(o.x)+" y:"+Math.round(o.y)+" hue:"+o.hue;
+    else if(o.type==="random")dt="hue = "+o.value;
+    r.innerHTML='<span class="ot '+tc+'">'+o.type+"</span> "+dt;
+    r.id="o"+ops.length;$ol.appendChild(r);$ol.scrollTop=$ol.scrollHeight;
+  }
+  upd();
 }
 function applyOne(){
   if(!pend.length)return false;var o=pend.shift();
-  if(o.type==="launch")M.launch(o.x,o.y,o.hue);
-  ac++;var r=document.getElementById("o"+ac);if(r)r.className="orow done";upd();return true;
+  if(o.type==="frame")mirrorFrame=o;
+  ac++;
+  // Mark visible log rows as applied (frame ops have no row)
+  var r=document.getElementById("o"+ac);
+  if(r)r.className="orow done";
+  upd();return true;
 }
-// Temporal drain: replay ops at their original cadence
 function drainTemporal(){
   if(!pend.length){draining=false;return;}
   draining=true;
   var base=pend[0].ts||0;
-  var now=performance.now();
   for(var i=0;i<pend.length;i++){
     var delay=(pend[i].ts||0)-base;
     (function(idx){
       var t=setTimeout(function(){
-        // Apply this specific op
         var o=pend[idx];
-        if(o.type==="launch")M.launch(o.x,o.y,o.hue);
+        if(o.type==="frame")mirrorFrame=o;
         ac++;var r=document.getElementById("o"+ac);if(r)r.className="orow done";upd();
         if(idx===pend.length-1){pend=[];draining=false;upd();}
       },delay);
@@ -865,7 +875,10 @@ function drainTemporal(){
 }
 function cancelDrain(){for(var t of drainTimers)clearTimeout(t);drainTimers=[];draining=false;}
 function applyAllInstant(){while(pend.length)applyOne()}
-function upd(){$qc.textContent=pend.length;$ac.textContent=ac}
+function upd(){
+  var pendInput=pend.filter(function(o){return o.type!=="frame"}).length;
+  $qc.textContent=pendInput;$ac.textContent=ac;
+}
 
 $pp.onclick=function(){
   paused=!paused;$pp.textContent=paused?"play":"| |";$pp.classList.toggle("on",paused);
@@ -873,9 +886,15 @@ $pp.onclick=function(){
 };
 document.getElementById("st").onclick=function(){
   if(!paused){paused=true;$pp.textContent="play";$pp.classList.add("on");cancelDrain();}
-  applyOne();
+  // Step: apply ops until we hit an input op (skip frame ops)
+  var found=false;
+  while(pend.length&&!found){
+    var next=pend[0];
+    applyOne();
+    if(next.type!=="frame")found=true;
+  }
 };
-document.getElementById("rs").onclick=function(){cancelDrain();S=mk();M=mk();ops=[];pend=[];ac=0;$ol.innerHTML="";upd()};
+document.getElementById("rs").onclick=function(){cancelDrain();S=mk();mirrorFrame=null;ops=[];pend=[];ac=0;$ol.innerHTML="";upd()};
 
 var cv=document.getElementById("S"),dg=null;
 function xy(e){var r=cv.getBoundingClientRect();return{x:(e.clientX-r.left)/r.width*W,y:(e.clientY-r.top)/r.height*H}}
@@ -883,19 +902,42 @@ cv.addEventListener("pointerdown",function(e){dg=xy(e);cv.setPointerCapture(e.po
 cv.addEventListener("pointermove",function(e){if(dg)dg=xy(e)});
 cv.addEventListener("pointerup",function(){if(!dg)return;var a=dg;dg=null;
   var hue=Math.floor(Math.random()*360);S.launch(a.x,a.y,hue);
-  addOp({type:"random",value:hue});addOp({type:"launch",x:a.x,y:a.y,hue:hue});
-  // In play mode, apply immediately (real-time)
-  if(!paused)applyAllInstant();
+  addOp({type:"random",value:hue});
+  addOp({type:"launch",x:a.x,y:a.y,hue:hue});
 });
 cv.addEventListener("pointercancel",function(){dg=null});
 
+// Draw mirror from snapshot (no game logic, just render)
+function drMirror(cx){
+  cx.fillStyle="#06080d";cx.fillRect(0,0,W,H);
+  var i,z;
+  for(i=ZN.length-1;i>=0;i--){z=ZN[i];cx.fillStyle=z.c;cx.globalAlpha=.18;
+    cx.beginPath();cx.arc(TX,TY,z.r,0,Math.PI*2);cx.fill();
+    cx.globalAlpha=1;cx.strokeStyle=z.c;cx.lineWidth=1;
+    cx.beginPath();cx.arc(TX,TY,z.r,0,Math.PI*2);cx.stroke()}
+  cx.fillStyle="#8b949e";cx.beginPath();cx.moveTo(LX-12,LY+10);cx.lineTo(LX+12,LY+10);cx.lineTo(LX,LY-10);cx.closePath();cx.fill();
+  if(!mirrorFrame)return;
+  for(i=0;i<mirrorFrame.pucks.length;i++){var p=mirrorFrame.pucks[i];
+    cx.fillStyle=p.cl;cx.globalAlpha=p.st?.9:1;
+    cx.beginPath();cx.arc(p.x,p.y,PR,0,Math.PI*2);cx.fill();
+    cx.globalAlpha=1;cx.fillStyle="#fff";cx.font="bold 11px sans-serif";cx.textAlign="center";cx.textBaseline="middle";
+    cx.fillText(String(p.id),p.x,p.y)}
+  cx.fillStyle="#bc8cff";cx.font="bold 18px sans-serif";cx.textAlign="right";cx.textBaseline="top";
+  cx.fillText(String(mirrorFrame.score),W-8,6);cx.font="9px sans-serif";cx.fillStyle="#8b949e";cx.fillText("score",W-8,26);
+}
+
 function loop(){
-  S.step();M.step();
-  dr(sc,S,true);dr(mc,M,false);
-  var ok=S.pk.length===M.pk.length;
-  if(ok)for(var i=0;i<S.pk.length;i++){var a=S.pk[i],b=M.pk[i];if(Math.abs(a.x-b.x)>.01||Math.abs(a.y-b.y)>.01){ok=false;break}}
+  S.step();
+  // Emit a frame op every frame (the mirror's only input)
+  var snap={type:"frame",pucks:S.pk.map(function(p){return{id:p.id,x:p.x,y:p.y,cl:p.cl,st:p.st,pt:p.pt}}),score:S.sc()};
+  addOp(snap);
+  if(!paused&&!draining)applyAllInstant();
+
+  dr(sc,S,true);
+  drMirror(mc);
+
+  var ok=mirrorFrame&&mirrorFrame.score===S.sc()&&mirrorFrame.pucks.length===S.pk.length;
   if(pend.length)ok=false;
-  $ig.className="ig "+(ok?"ok":"bad");$ig.textContent=ok?"in sync":pend.length?"behind":"DESYNC";
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
