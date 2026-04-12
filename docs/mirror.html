@@ -1,58 +1,47 @@
 <!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>remjs mirror — shuffleboard</title>
-  <style>
-    :root { color-scheme: dark; --font-sans: system-ui, -apple-system, sans-serif; }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: var(--font-sans); background: #0d1117; color: #e6edf3; }
-    h1 { text-align: center; padding: 0.6em 0 0.15em; font-size: 1.3em; font-weight: 600; }
-    .hint { text-align: center; color: #8b949e; font-size: 0.82em; padding-bottom: 0.6em;
-      max-width: 700px; margin: 0 auto; line-height: 1.5; }
-    .hint code { background: #161b22; padding: 0.12em 0.35em; border-radius: 3px; font-size: 0.88em; }
-    .panels { display: flex; gap: 4px; padding: 0 4px 4px; }
-    .panel { flex: 1; position: relative; border-radius: 6px; overflow: hidden; border: 1px solid #30363d; }
-    .panel-label { position: absolute; top: 6px; left: 10px; z-index: 1;
-      font-size: 0.65em; text-transform: uppercase; letter-spacing: 0.06em;
-      font-weight: 700; pointer-events: none; }
-    .source .panel-label { color: #58a6ff; }
-    .mirror .panel-label { color: #bc8cff; }
-    canvas { display: block; width: 100%; aspect-ratio: 4/3; cursor: crosshair; background: #06080d; }
-    .stats { text-align: center; color: #8b949e; font-size: 0.7em; padding: 0.5em;
-      font-family: ui-monospace, monospace; }
-    .stats .v { color: #58a6ff; font-variant-numeric: tabular-nums; }
-    .integrity { display: inline-block; padding: 0.15em 0.5em; border-radius: 3px; font-weight: 600; }
-    .integrity.ok { color: #3fb950; }
-    .integrity.bad { color: #f85149; }
-    @media (max-width: 700px) { .panels { flex-direction: column; } }
-  </style>
-</head>
-<body>
-  <h1>remjs mirror — shuffleboard</h1>
-  <p class="hint">
-    <strong>Left</strong> runs with real inputs. <strong>Right</strong> replays
-    recorded event-loop ops (<code>Math.random</code>, <code>Date.now</code>,
-    pointer events). Same code, same inputs, identical output.
-  </p>
-  <div class="panels">
-    <div class="panel source">
-      <span class="panel-label">source — real inputs</span>
-      <canvas id="source" width="560" height="420"></canvas>
-    </div>
-    <div class="panel mirror">
-      <span class="panel-label">follower — replayed inputs</span>
-      <canvas id="mirror" width="560" height="420"></canvas>
-    </div>
-  </div>
-  <div class="stats">
-    ops/frame: <span class="v" id="opsCount">0</span> ·
-    <span class="integrity ok" id="integrity">in sync</span>
-  </div>
-
-  <script>(function(){"use strict";
-/* ---------- ops.js ---------- */
+<html lang="en"><head><meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>remjs mirror — shuffleboard</title>
+<style>
+:root{color-scheme:dark;--f:system-ui,-apple-system,sans-serif;--m:ui-monospace,'SF Mono',monospace}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--f);background:#0d1117;color:#e6edf3}
+h1{text-align:center;padding:.5em 0 .1em;font-size:1.15em;font-weight:600}
+.hint{text-align:center;color:#8b949e;font-size:.75em;padding-bottom:.4em;max-width:720px;margin:0 auto;line-height:1.4}
+.hint code{background:#161b22;padding:.1em .3em;border-radius:3px;font-size:.85em}
+.layout{display:grid;grid-template-columns:1fr 260px 1fr;gap:4px;padding:0 4px;height:calc(100vh - 80px);min-height:320px}
+.panel{position:relative;border-radius:6px;overflow:hidden;border:1px solid #30363d}
+.plbl{position:absolute;top:4px;left:8px;z-index:1;font-size:.58em;text-transform:uppercase;letter-spacing:.06em;font-weight:700;pointer-events:none}
+.source .plbl{color:#58a6ff}.mirror .plbl{color:#bc8cff}
+canvas{display:block;width:100%;height:100%;cursor:crosshair;background:#06080d}
+.opp{display:flex;flex-direction:column;border:1px solid #30363d;border-radius:6px;background:#161b22}
+.oph{padding:5px 8px;border-bottom:1px solid #30363d;display:flex;align-items:center;justify-content:space-between;font-size:.6em;text-transform:uppercase;letter-spacing:.06em;color:#8b949e;background:#0d1117;border-radius:6px 6px 0 0}
+.oph .t{font-weight:700;color:#e6edf3}
+.opc{display:flex;gap:3px}
+.opc button{background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:3px;padding:1px 7px;font-size:1em;cursor:pointer;font-family:var(--m)}
+.opc button:hover{background:#30363d}
+.opc button.on{background:#1f6feb;border-color:#58a6ff}
+.olog{flex:1;overflow-y:auto;font-family:var(--m);font-size:.58rem;line-height:1.5;padding:0}
+.orow{padding:1px 8px;border-bottom:1px solid rgba(48,54,61,.3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.orow.pend{opacity:.35}.orow.done{opacity:1}
+.orow .ot{display:inline-block;min-width:4.2em;font-weight:600}
+.ot.launch{color:#f0c040}.ot.random{color:#bc8cff}
+.opf{padding:4px 8px;border-top:1px solid #30363d;font-family:var(--m);font-size:.55rem;color:#8b949e;display:flex;justify-content:space-between;background:#0d1117;border-radius:0 0 6px 6px}
+.ig{font-weight:700}.ig.ok{color:#3fb950}.ig.bad{color:#f85149}
+@media(max-width:800px){.layout{grid-template-columns:1fr 1fr;grid-template-rows:1fr 180px}.opp{grid-column:1/-1}}
+</style></head><body>
+<h1>remjs mirror — shuffleboard</h1>
+<p class="hint">Click left canvas to launch. Each click emits a <code>random</code> op (puck color) + <code>launch</code> op (aim). Ops flow to the right canvas. <strong>Pause</strong> to queue them, <strong>Step</strong> to replay one at a time.</p>
+<div class="layout">
+<div class="panel source"><span class="plbl">source</span><canvas id="S" width="560" height="420"></canvas></div>
+<div class="opp">
+<div class="oph"><span class="t">op stream</span><div class="opc"><button id="pp" title="pause / play">| |</button><button id="st">step</button><button id="rs">reset</button></div></div>
+<div class="olog" id="ol"></div>
+<div class="opf"><span>queued: <span id="qc">0</span></span><span>applied: <span id="ac">0</span></span><span class="ig ok" id="ig">in sync</span></div>
+</div>
+<div class="panel mirror"><span class="plbl">follower</span><canvas id="M" width="560" height="420"></canvas></div>
+</div>
+<script>(function(){"use strict";
 /**
  * remjs v0.3 — Event Loop Op Protocol
  *
@@ -66,7 +55,6 @@
  * simple structures that survive JSON round-trip without special handling.
  */
 
-/* ---------- codec.js ---------- */
 /**
  * remjs v0.3 — Codec
  *
@@ -88,7 +76,6 @@ const jsonCodec = {
     },
 };
 
-/* ---------- patches/clock.js ---------- */
 /**
  * Clock patch — intercepts Date.now() and performance.now().
  *
@@ -118,7 +105,6 @@ function installClockPatch(emit) {
     };
 }
 
-/* ---------- patches/random.js ---------- */
 /**
  * Random patch — intercepts Math.random() and crypto.getRandomValues().
  *
@@ -155,7 +141,6 @@ function installRandomPatch(emit) {
     };
 }
 
-/* ---------- patches/timers.js ---------- */
 /**
  * Timer patch — intercepts setTimeout, setInterval, clearTimeout, clearInterval.
  *
@@ -243,7 +228,6 @@ function installTimerPatch(emit) {
     return { uninstall, state: patchState };
 }
 
-/* ---------- patches/network.js ---------- */
 /**
  * Network patch — intercepts fetch().
  *
@@ -285,7 +269,6 @@ function installNetworkPatch(emit) {
     };
 }
 
-/* ---------- patches/storage.js ---------- */
 /**
  * Storage patch — intercepts localStorage and sessionStorage.
  *
@@ -329,7 +312,6 @@ function installStoragePatch(emit) {
     };
 }
 
-/* ---------- target.js ---------- */
 /**
  * Element targeting — generates deterministic CSS selector paths.
  *
@@ -377,7 +359,6 @@ function resolveTargetPath(path) {
     }
 }
 
-/* ---------- patches/events.js ---------- */
 /**
  * Event patch — intercepts addEventListener to record DOM events.
  *
@@ -471,7 +452,6 @@ function installEventPatch(emit) {
     };
 }
 
-/* ---------- recorder.js ---------- */
 /**
  * Recorder — captures event loop inputs as ops.
  *
@@ -563,7 +543,6 @@ function createRecorder(options) {
     return { start, stop, snapshot, destroy };
 }
 
-/* ---------- player.js ---------- */
 /**
  * Player — replays event loop ops on a follower runtime.
  *
@@ -761,185 +740,104 @@ function createPlayer(options = {}) {
     return { apply, destroy };
 }
 
-
 window.remjs = { createRecorder, createPlayer, jsonCodec };
-
 })();</script>
-  <script>
-(function() {
-  var W = 560, H = 420;
-  var LAUNCHER = { x: W / 2, y: H - 34 };
-  var TARGET = { x: W / 2, y: 70 };
-  var ZONES = [
-    { r: 22, pts: 5, color: "#f0c040" },
-    { r: 46, pts: 3, color: "#6fa8dc" },
-    { r: 74, pts: 1, color: "#3e5978" },
-  ];
-  var PUCK_R = 14, FRICTION = 0.985, REST = 0.2, BOUNCE = 0.9;
+<script>
+(function(){
+var W=560,H=420,LX=W/2,LY=H-34,TX=W/2,TY=70;
+var ZN=[{r:22,p:5,c:"#f0c040"},{r:46,p:3,c:"#6fa8dc"},{r:74,p:1,c:"#3e5978"}];
+var PR=14,FR=.985,RS=.2,BN=.9;
 
-  /* ── Game state factory ─────────────────────────────────── */
-  function makeGame(rng, clock) {
-    var pucks = [];
-    var nextId = 1;
-    var score = 0;
+function mk(){
+  var pk=[],nid=1,sc=0;
+  return{pk:pk,sc:function(){return sc},
+    launch:function(ax,ay,hue){
+      var dx=ax-LX,dy=ay-LY,ln=Math.hypot(dx,dy),pw=Math.min(14,ln/14);
+      if(pw<.5)return;var nx=dx/(ln||1),ny=dy/(ln||1),id=nid++;
+      pk.push({id:id,x:LX,y:LY,vx:nx*pw,vy:ny*pw,cl:"hsl("+hue+",80%,60%)",st:false,pt:0});
+    },
+    step:function(){
+      var i,j,p,a,b,dx,dy,ds,md,d,nx,ny,ov,rv,im;
+      for(i=0;i<pk.length;i++){p=pk[i];if(p.st)continue;
+        p.x+=p.vx;p.y+=p.vy;p.vx*=FR;p.vy*=FR;
+        if(p.x<PR){p.x=PR;p.vx*=-.85}else if(p.x>W-PR){p.x=W-PR;p.vx*=-.85}
+        if(p.y<PR){p.y=PR;p.vy*=-.85}else if(p.y>H-PR){p.y=H-PR;p.vy*=-.85}}
+      for(i=0;i<pk.length;i++){a=pk[i];for(j=i+1;j<pk.length;j++){b=pk[j];
+        dx=b.x-a.x;dy=b.y-a.y;ds=dx*dx+dy*dy;md=PR*2;
+        if(ds>=md*md||ds===0)continue;d=Math.sqrt(ds);
+        nx=dx/d;ny=dy/d;ov=(md-d)/2;
+        a.x-=nx*ov;a.y-=ny*ov;b.x+=nx*ov;b.y+=ny*ov;
+        rv=(b.vx-a.vx)*nx+(b.vy-a.vy)*ny;if(rv>0)continue;
+        im=-(1+BN)*rv/2;a.vx-=im*nx;a.vy-=im*ny;b.vx+=im*nx;b.vy+=im*ny;
+        if(a.st){a.st=false;a.pt=0}if(b.st){b.st=false;b.pt=0}}}
+      sc=0;for(i=0;i<pk.length;i++){p=pk[i];
+        if(!p.st&&Math.hypot(p.vx,p.vy)<RS){p.st=true;p.vx=0;p.vy=0;
+          d=Math.hypot(p.x-TX,p.y-TY);for(j=0;j<ZN.length;j++)if(d<=ZN[j].r){p.pt=ZN[j].p;break}}
+        if(p.st)sc+=p.pt}
+    }};
+}
 
-    function launchPuck(aimX, aimY) {
-      var dx = aimX - LAUNCHER.x, dy = aimY - LAUNCHER.y;
-      var len = Math.hypot(dx, dy);
-      var power = Math.min(14, len / 14);
-      if (power < 0.5) return;
-      var nx = dx / (len || 1), ny = dy / (len || 1);
-      var id = nextId++;
-      pucks.push({
-        id: id, x: LAUNCHER.x, y: LAUNCHER.y,
-        vx: nx * power, vy: ny * power,
-        color: "hsl(" + ((id * 53) % 360) + ", 80%, 60%)",
-        stopped: false, points: 0,
-      });
-    }
+function dr(cx,g,src){
+  cx.fillStyle="#06080d";cx.fillRect(0,0,W,H);
+  var i,z,p;
+  for(i=ZN.length-1;i>=0;i--){z=ZN[i];cx.fillStyle=z.c;cx.globalAlpha=.18;
+    cx.beginPath();cx.arc(TX,TY,z.r,0,Math.PI*2);cx.fill();
+    cx.globalAlpha=1;cx.strokeStyle=z.c;cx.lineWidth=1;
+    cx.beginPath();cx.arc(TX,TY,z.r,0,Math.PI*2);cx.stroke()}
+  cx.fillStyle="#8b949e";cx.beginPath();cx.moveTo(LX-12,LY+10);cx.lineTo(LX+12,LY+10);cx.lineTo(LX,LY-10);cx.closePath();cx.fill();
+  for(i=0;i<g.pk.length;i++){p=g.pk[i];cx.fillStyle=p.cl;cx.globalAlpha=p.st?.9:1;
+    cx.beginPath();cx.arc(p.x,p.y,PR,0,Math.PI*2);cx.fill();
+    cx.globalAlpha=1;cx.fillStyle="#fff";cx.font="bold 11px sans-serif";cx.textAlign="center";cx.textBaseline="middle";
+    cx.fillText(String(p.id),p.x,p.y)}
+  cx.fillStyle=src?"#58a6ff":"#bc8cff";cx.font="bold 18px sans-serif";cx.textAlign="right";cx.textBaseline="top";
+  cx.fillText(String(g.sc()),W-8,6);cx.font="9px sans-serif";cx.fillStyle="#8b949e";cx.fillText("score",W-8,26);
+}
 
-    function step() {
-      for (var p of pucks) {
-        if (p.stopped) continue;
-        p.x += p.vx; p.y += p.vy;
-        p.vx *= FRICTION; p.vy *= FRICTION;
-        if (p.x < PUCK_R) { p.x = PUCK_R; p.vx = -p.vx * 0.85; }
-        else if (p.x > W - PUCK_R) { p.x = W - PUCK_R; p.vx = -p.vx * 0.85; }
-        if (p.y < PUCK_R) { p.y = PUCK_R; p.vy = -p.vy * 0.85; }
-        else if (p.y > H - PUCK_R) { p.y = H - PUCK_R; p.vy = -p.vy * 0.85; }
-      }
-      for (var i = 0; i < pucks.length; i++) {
-        var a = pucks[i];
-        for (var j = i + 1; j < pucks.length; j++) {
-          var b = pucks[j];
-          var dx = b.x - a.x, dy = b.y - a.y;
-          var ds = dx * dx + dy * dy, md = PUCK_R * 2;
-          if (ds >= md * md || ds === 0) continue;
-          var d = Math.sqrt(ds);
-          var nx = dx / d, ny = dy / d, ov = (md - d) / 2;
-          a.x -= nx * ov; a.y -= ny * ov;
-          b.x += nx * ov; b.y += ny * ov;
-          var rvn = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
-          if (rvn > 0) continue;
-          var imp = -(1 + BOUNCE) * rvn / 2;
-          a.vx -= imp * nx; a.vy -= imp * ny;
-          b.vx += imp * nx; b.vy += imp * ny;
-          if (a.stopped) { a.stopped = false; a.points = 0; }
-          if (b.stopped) { b.stopped = false; b.points = 0; }
-        }
-      }
-      score = 0;
-      for (var p of pucks) {
-        if (!p.stopped && Math.hypot(p.vx, p.vy) < REST) {
-          p.stopped = true; p.vx = 0; p.vy = 0;
-          var dd = Math.hypot(p.x - TARGET.x, p.y - TARGET.y);
-          for (var z of ZONES) if (dd <= z.r) { p.points = z.pts; break; }
-        }
-        if (p.stopped) score += p.points;
-      }
-    }
+var S=mk(),M=mk();
+var sc=document.getElementById("S").getContext("2d"),mc=document.getElementById("M").getContext("2d");
+var $ol=document.getElementById("ol"),$qc=document.getElementById("qc"),$ac=document.getElementById("ac"),$ig=document.getElementById("ig");
+var $pp=document.getElementById("pp");
 
-    return { pucks: pucks, launchPuck: launchPuck, step: step, getScore: function() { return score; } };
-  }
+var ops=[],pend=[],ac=0,paused=false;
 
-  /* ── Draw ────────────────────────────────────────────────── */
-  function draw(ctx, game, label, isSource) {
-    ctx.fillStyle = "#06080d"; ctx.fillRect(0, 0, W, H);
-    for (var i = ZONES.length - 1; i >= 0; i--) {
-      var z = ZONES[i];
-      ctx.fillStyle = z.color; ctx.globalAlpha = 0.18;
-      ctx.beginPath(); ctx.arc(TARGET.x, TARGET.y, z.r, 0, Math.PI * 2); ctx.fill();
-      ctx.globalAlpha = 1; ctx.strokeStyle = z.color; ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.arc(TARGET.x, TARGET.y, z.r, 0, Math.PI * 2); ctx.stroke();
-    }
-    ctx.fillStyle = "#8b949e";
-    ctx.beginPath();
-    ctx.moveTo(LAUNCHER.x - 12, LAUNCHER.y + 10);
-    ctx.lineTo(LAUNCHER.x + 12, LAUNCHER.y + 10);
-    ctx.lineTo(LAUNCHER.x, LAUNCHER.y - 10);
-    ctx.closePath(); ctx.fill();
-    for (var p of game.pucks) {
-      ctx.fillStyle = p.color; ctx.globalAlpha = p.stopped ? 0.9 : 1;
-      ctx.beginPath(); ctx.arc(p.x, p.y, PUCK_R, 0, Math.PI * 2); ctx.fill();
-      ctx.globalAlpha = 1; ctx.fillStyle = "#fff";
-      ctx.font = "bold 11px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.fillText(String(p.id), p.x, p.y);
-    }
-    ctx.fillStyle = isSource ? "#58a6ff" : "#bc8cff";
-    ctx.font = "bold 18px sans-serif"; ctx.textAlign = "right"; ctx.textBaseline = "top";
-    ctx.fillText(String(game.getScore()), W - 8, 6);
-    ctx.font = "9px sans-serif"; ctx.fillStyle = "#8b949e";
-    ctx.fillText("score", W - 8, 26);
-  }
+function addOp(o){
+  ops.push(o);pend.push(o);
+  var r=document.createElement("div");r.className="orow pend";
+  var tc=o.type==="launch"?"launch":"random";
+  var dt=o.type==="launch"?"x:"+Math.round(o.x)+" y:"+Math.round(o.y)+" hue:"+o.hue:"hue = "+o.value;
+  r.innerHTML='<span class="ot '+tc+'">'+o.type+"</span> "+dt;
+  r.id="o"+ops.length;$ol.appendChild(r);$ol.scrollTop=$ol.scrollHeight;upd();
+}
+function applyOne(){
+  if(!pend.length)return false;var o=pend.shift();
+  if(o.type==="launch")M.launch(o.x,o.y,o.hue);
+  ac++;var r=document.getElementById("o"+ac);if(r)r.className="orow done";upd();return true;
+}
+function applyAll(){while(pend.length)applyOne()}
+function upd(){$qc.textContent=pend.length;$ac.textContent=ac}
 
-  /* ── Two games: source (real) + mirror (replayed) ────────── */
-  var sourceGame = makeGame();
-  var mirrorGame = makeGame();
+$pp.onclick=function(){paused=!paused;$pp.textContent=paused?"play":"| |";$pp.classList.toggle("on",paused)};
+document.getElementById("st").onclick=function(){if(!paused){paused=true;$pp.textContent="play";$pp.classList.add("on")}applyOne()};
+document.getElementById("rs").onclick=function(){S=mk();M=mk();ops=[];pend=[];ac=0;$ol.innerHTML="";upd()};
 
-  var sctx = document.getElementById("source").getContext("2d");
-  var mctx = document.getElementById("mirror").getContext("2d");
-  var $ops = document.getElementById("opsCount");
-  var $integrity = document.getElementById("integrity");
+var cv=document.getElementById("S"),dg=null;
+function xy(e){var r=cv.getBoundingClientRect();return{x:(e.clientX-r.left)/r.width*W,y:(e.clientY-r.top)/r.height*H}}
+cv.addEventListener("pointerdown",function(e){dg=xy(e);cv.setPointerCapture(e.pointerId)});
+cv.addEventListener("pointermove",function(e){if(dg)dg=xy(e)});
+cv.addEventListener("pointerup",function(){if(!dg)return;var a=dg;dg=null;
+  var hue=Math.floor(Math.random()*360);S.launch(a.x,a.y,hue);
+  addOp({type:"random",value:hue});addOp({type:"launch",x:a.x,y:a.y,hue:hue})});
+cv.addEventListener("pointercancel",function(){dg=null});
 
-  var opQueue = [];  // ops recorded this frame, applied to mirror
-
-  /* ── Pointer input on source canvas ──────────────────────── */
-  var sourceCanvas = document.getElementById("source");
-  var drag = null;
-  function canvasXY(ev) {
-    var r = sourceCanvas.getBoundingClientRect();
-    return { x: (ev.clientX - r.left) / r.width * W, y: (ev.clientY - r.top) / r.height * H };
-  }
-  sourceCanvas.addEventListener("pointerdown", function(ev) {
-    drag = canvasXY(ev); sourceCanvas.setPointerCapture(ev.pointerId);
-  });
-  sourceCanvas.addEventListener("pointermove", function(ev) { if (drag) drag = canvasXY(ev); });
-  sourceCanvas.addEventListener("pointerup", function() {
-    if (!drag) return;
-    var aim = drag; drag = null;
-    sourceGame.launchPuck(aim.x, aim.y);
-    // Record the launch as an op for the mirror
-    opQueue.push({ type: "launch", x: aim.x, y: aim.y });
-  });
-  sourceCanvas.addEventListener("pointercancel", function() { drag = null; });
-
-  /* ── Main loop ───────────────────────────────────────────── */
-  var opsPerFrame = 0;
-  function loop() {
-    // Source: step with real physics
-    sourceGame.step();
-
-    // Mirror: apply queued launch ops, then step
-    for (var op of opQueue) {
-      if (op.type === "launch") mirrorGame.launchPuck(op.x, op.y);
-    }
-    opsPerFrame = opQueue.length;
-    opQueue = [];
-    mirrorGame.step();
-
-    // Draw both
-    draw(sctx, sourceGame, "source", true);
-    draw(mctx, mirrorGame, "mirror", false);
-
-    // Stats
-    $ops.textContent = opsPerFrame;
-
-    // Integrity check
-    var ok = sourceGame.pucks.length === mirrorGame.pucks.length;
-    if (ok) {
-      for (var i = 0; i < sourceGame.pucks.length; i++) {
-        var a = sourceGame.pucks[i], b = mirrorGame.pucks[i];
-        if (Math.abs(a.x - b.x) > 0.01 || Math.abs(a.y - b.y) > 0.01) { ok = false; break; }
-      }
-    }
-    $integrity.className = "integrity " + (ok ? "ok" : "bad");
-    $integrity.textContent = ok ? "in sync" : "DESYNC";
-
-    requestAnimationFrame(loop);
-  }
-
+function loop(){
+  S.step();if(!paused)applyAll();M.step();
+  dr(sc,S,true);dr(mc,M,false);
+  var ok=S.pk.length===M.pk.length;
+  if(ok)for(var i=0;i<S.pk.length;i++){var a=S.pk[i],b=M.pk[i];if(Math.abs(a.x-b.x)>.01||Math.abs(a.y-b.y)>.01){ok=false;break}}
+  if(pend.length)ok=false;
+  $ig.className="ig "+(ok?"ok":"bad");$ig.textContent=ok?"in sync":pend.length?"behind":"DESYNC";
   requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
 })();
-  </script>
-</body>
-</html>
+</script></body></html>
