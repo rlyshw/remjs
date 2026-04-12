@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>remjs — streaming JS state serialization</title>
-  <meta name="description" content="Wrap a JS state tree in a proxy, get a stream of structured ops, rebuild identical state anywhere. Transport-agnostic state mirroring in ~500 LOC." />
+  <title>remjs — event loop replication</title>
+  <meta name="description" content="Capture event loop inputs as structured ops, replay them anywhere. Same code + same inputs = identical execution. Transport-agnostic JS program replication." />
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -759,11 +759,11 @@
   <!-- Hero -->
   <section class="hero">
     <h1>rem<span>js</span></h1>
-    <p class="tagline">Streaming JS state serialization</p>
+    <p class="tagline">Event loop replication</p>
     <p class="hero-desc">
-      Wrap a JavaScript state tree in a proxy, get a stream of structured
-      ops describing every mutation, rebuild identical state anywhere.
-      No framework, no transport, ~500 lines of TypeScript.
+      Capture event loop inputs as structured ops, replay them on any
+      runtime for identical execution. Same code + same inputs = same state.
+      No framework hooks, no transport, pure TypeScript.
     </p>
 
     <div class="hero-buttons">
@@ -817,44 +817,40 @@
   <section id="how">
     <h2>How it <span>works</span></h2>
     <p class="section-desc">
-      <code>createStateStream</code> wraps a plain object with a deep
-      <code>Proxy</code> that intercepts every property write, array
-      method, and <code>Map</code>/<code>Set</code> mutation. Each
-      mutation becomes a structured op. You ship the ops over any
-      transport — WebSocket, <code>postMessage</code>,
-      <code>BroadcastChannel</code>, an in-process function call — and
-      the receiver calls <code>applyOps</code> on a plain object to
-      rebuild the same state.
+      <code>createRecorder</code> monkey-patches the event loop surface —
+      <code>addEventListener</code>, <code>setTimeout</code>,
+      <code>fetch</code>, <code>Math.random</code>, <code>Date.now</code> —
+      and captures every input as a structured op. Ship the ops over any
+      transport, and <code>createPlayer</code> replays them on the other
+      side. Same code, same inputs, identical execution.
     </p>
 
     <div class="code-block">
-      <div class="code-header">source side</div>
-      <pre><span class="kw">import</span> { <span class="fn">createStateStream</span> } <span class="kw">from</span> <span class="str">'remjs'</span>;
+      <div class="code-header">source side (leader)</div>
+      <pre><span class="kw">import</span> { <span class="fn">createRecorder</span> } <span class="kw">from</span> <span class="str">'remjs'</span>;
 
-<span class="kw">const</span> { state, snapshot } = <span class="fn">createStateStream</span>(
-  { <span class="prop">count</span>: <span class="num">0</span>, <span class="prop">user</span>: { <span class="prop">name</span>: <span class="str">'Alice'</span> } },
-  { <span class="prop">onOps</span>: (ops) =&gt; transport.<span class="fn">send</span>(ops) },
-);
-
-<span class="cmt">// mutate normally — ops are emitted automatically</span>
-state.<span class="prop">count</span>++;
-state.<span class="prop">user</span>.<span class="prop">name</span> = <span class="str">'Bob'</span>;</pre>
+<span class="kw">const</span> recorder = <span class="fn">createRecorder</span>({
+  <span class="prop">onOps</span>: (ops) =&gt; transport.<span class="fn">send</span>(ops),
+});
+recorder.<span class="fn">start</span>();
+<span class="cmt">// every click, timer, fetch, Math.random() is captured</span></pre>
     </div>
 
     <div class="code-block">
-      <div class="code-header">receiver side</div>
-      <pre><span class="kw">import</span> { <span class="fn">applyOps</span>, <span class="fn">decode</span> } <span class="kw">from</span> <span class="str">'remjs'</span>;
+      <div class="code-header">follower side (replica)</div>
+      <pre><span class="kw">import</span> { <span class="fn">createPlayer</span> } <span class="kw">from</span> <span class="str">'remjs'</span>;
 
-<span class="kw">let</span> mirror = <span class="fn">decode</span>(initialSnapshot.value);
+<span class="kw">const</span> player = <span class="fn">createPlayer</span>();
 transport.onMessage = (ops) =&gt; {
-  mirror = <span class="fn">applyOps</span>(mirror, ops);
+  player.<span class="fn">apply</span>(ops);
+  <span class="cmt">// events dispatch, randoms seed, clocks align</span>
 };</pre>
     </div>
 
     <p class="section-desc" style="margin-top: 1.5rem;">
-      The library is transport-agnostic. It gives you an op stream and a
-      receiver; you decide how to move bytes. The demo below does it with
-      a single function call — both sides live in the same browser tab.
+      Transport-agnostic. The library gives you a recorder and a player;
+      you decide how to move bytes. The demo below uses <code>postMessage</code>
+      between iframes — both sides run the same shuffleboard code.
     </p>
   </section>
 
@@ -878,40 +874,39 @@ transport.onMessage = (ops) =&gt; {
     </p>
   </section>
 
-  <!-- What's interceptable -->
+  <!-- What's captured -->
   <section id="interceptable">
-    <h2>What's <span>interceptable</span></h2>
+    <h2>What's <span>captured</span></h2>
     <p class="section-desc">
-      remjs scopes itself to application state: things you keep in plain
-      objects — Redux stores, Zustand stores, React state trees, arbitrary
-      JS object graphs. Closures and primitive locals need a build-time
-      source transform; everything else goes through the Proxy.
+      remjs intercepts the complete event loop input surface. Every source
+      of non-determinism is recorded so replicas produce identical execution
+      — no framework hooks, no source transforms needed.
     </p>
 
     <div class="feature-grid">
       <div class="feature">
-        <h3><span class="dot ok"></span>Object property writes</h3>
-        <p>Plain set / delete via the generic Proxy trap.</p>
+        <h3><span class="dot ok"></span>DOM events</h3>
+        <p>Clicks, keypresses, input, scroll — every user interaction.</p>
       </div>
       <div class="feature">
-        <h3><span class="dot ok"></span>Array mutations</h3>
-        <p>push / pop / splice / sort decompose into per-index sets + length change.</p>
+        <h3><span class="dot ok"></span>Timers</h3>
+        <p>setTimeout, setInterval, requestAnimationFrame — when callbacks fire.</p>
       </div>
       <div class="feature">
-        <h3><span class="dot ok"></span>Map &amp; Set mutations</h3>
-        <p>set / delete / clear / add wrapped per method — internal slots work.</p>
+        <h3><span class="dot ok"></span>Network responses</h3>
+        <p>fetch / XHR responses — status, headers, body recorded.</p>
       </div>
       <div class="feature">
-        <h3><span class="dot ok"></span>Nested trees</h3>
-        <p>Child objects wrapped lazily on read with the extended path.</p>
+        <h3><span class="dot ok"></span>Randomness</h3>
+        <p>Math.random(), crypto.getRandomValues() — exact values recorded.</p>
       </div>
       <div class="feature">
-        <h3><span class="dot ok"></span>Special types</h3>
-        <p>Date, RegExp, BigInt, Map, Set, NaN, ±Infinity survive JSON.stringify.</p>
+        <h3><span class="dot ok"></span>Clock</h3>
+        <p>Date.now(), performance.now() — timestamps aligned across replicas.</p>
       </div>
       <div class="feature">
-        <h3><span class="dot no"></span>Closure state</h3>
-        <p>Not observable via Proxy — needs a source transform.</p>
+        <h3><span class="dot ok"></span>Storage</h3>
+        <p>localStorage, sessionStorage reads and writes.</p>
       </div>
     </div>
   </section>

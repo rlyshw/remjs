@@ -1,2139 +1,1908 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>remjs — mirror (bouncing balls)</title>
-    <style>
-      :root { color-scheme: light dark; }
-      * { box-sizing: border-box; }
-      body {
-        font-family: system-ui, -apple-system, sans-serif;
-        max-width: 1200px;
-        margin: 2em auto;
-        padding: 0 1em;
-        color: #222;
-        background: #fafafa;
-      }
-      h1 { margin: 0 0 0.2em; }
-      .hint { color: #666; margin: 0 0 1em; max-width: 780px; line-height: 1.5; }
-      .hint code {
-        background: #eef;
-        padding: 0.1em 0.35em;
-        border-radius: 3px;
-        font-size: 0.9em;
-      }
-      .controls {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 1.2em;
-        align-items: center;
-        margin: 1em 0;
-        padding: 0.8em 1em;
-        background: white;
-        border-radius: 8px;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-      }
-      .controls label { display: flex; align-items: center; gap: 0.4em; }
-      .controls input[type="range"] { width: 160px; }
-      .controls button {
-        padding: 0.45em 1.1em;
-        border: 1px solid #888;
-        background: #f5f5f5;
-        border-radius: 4px;
-        cursor: pointer;
-        font-size: 0.9em;
-      }
-      .controls button:hover { background: #eee; }
-      .panes {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 1em;
-      }
-      .pane {
-        background: white;
-        border-radius: 8px;
-        padding: 0.9em;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-        position: relative;
-      }
-      .pane h3 {
-        margin: 0 0 0.5em;
-        font-size: 0.8em;
-        text-transform: uppercase;
-        color: #888;
-        letter-spacing: 0.06em;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-      }
-      .pulse {
-        display: inline-block;
-        width: 10px;
-        height: 10px;
-        border-radius: 50%;
-        background: #4a8;
-        transition: box-shadow 0.08s, transform 0.08s;
-      }
-      .pulse.active {
-        box-shadow: 0 0 0 6px rgba(74, 168, 102, 0.4);
-        transform: scale(1.15);
-      }
-      canvas {
-        display: block;
-        width: 100%;
-        aspect-ratio: 4 / 3;
-        background: #0e1116;
-        border-radius: 6px;
-        cursor: crosshair;
-      }
-      @media (max-width: 900px) {
-        .panes { grid-template-columns: 1fr; }
-        body { margin: 1em auto; padding: 0 0.5em; }
-        h1 { font-size: 1.3em; }
-        .hint { font-size: 0.85em; }
-        .controls { gap: 0.6em; font-size: 0.85em; }
-        .stats { grid-template-columns: repeat(3, 1fr); }
-      }
-      .hint-caption {
-        text-align: center;
-        font-size: 0.75em;
-        color: #888;
-        margin-top: 0.4em;
-      }
-      .stats {
-        display: grid;
-        grid-template-columns: repeat(5, 1fr);
-        gap: 0.8em;
-        margin-top: 1em;
-        padding: 0.9em 1em;
-        background: white;
-        border-radius: 8px;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-      }
-      .stat .label {
-        font-size: 0.7em;
-        text-transform: uppercase;
-        color: #888;
-        letter-spacing: 0.06em;
-      }
-      .stat .value {
-        font-size: 1.6em;
-        font-weight: 600;
-        font-variant-numeric: tabular-nums;
-      }
-      .stat .unit { font-size: 0.55em; color: #aaa; margin-left: 0.2em; font-weight: 500; }
-      .integrity {
-        margin-top: 1em;
-        padding: 0.7em 1em;
-        font-family: ui-monospace, monospace;
-        font-size: 0.85em;
-        background: white;
-        border-radius: 8px;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-        border-left: 4px solid #4a8;
-      }
-      .integrity.bad { border-left-color: #d54; color: #c33; }
-      .footer {
-        margin-top: 2em;
-        text-align: center;
-        color: #888;
-        font-size: 0.8em;
-      }
-      .readout {
-        display: none;
-        grid-template-columns: 1fr 1fr;
-        gap: 1em;
-        margin-top: 1em;
-      }
-      .readout.visible { display: grid; }
-      .readout .pane { padding: 0.6em 0.8em; }
-      .readout h4 {
-        margin: 0 0 0.4em;
-        font-size: 0.75em;
-        text-transform: uppercase;
-        color: #888;
-        letter-spacing: 0.06em;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-      }
-      .readout h4 button {
-        padding: 0.15em 0.55em;
-        font-size: 0.85em;
-        border: 1px solid #aaa;
-        background: #f5f5f5;
-        border-radius: 3px;
-        cursor: pointer;
-      }
-      .readout pre {
-        margin: 0;
-        max-height: 340px;
-        overflow: auto;
-        font-family: ui-monospace, monospace;
-        font-size: 0.78em;
-        line-height: 1.35;
-        background: #f7f7f8;
-        padding: 0.6em 0.8em;
-        border-radius: 4px;
-        border: 1px solid #eee;
-        color: #222;
-        white-space: pre;
-      }
-      .readout.desync pre { border-color: #d54; background: #fff5f4; }
-      .speed-value {
-        display: inline-block;
-        min-width: 3em;
-        font-variant-numeric: tabular-nums;
-        font-family: ui-monospace, monospace;
-        font-size: 0.85em;
-        color: #555;
-      }
-    </style>
-  </head>
-  <body>
-    <h1>remjs mirror — shuffleboard</h1>
-    <p class="hint">
-      Two canvases, one HTML file, nothing in between but a function call.
-      The left court owns the state — a proxied JS object with a score,
-      a list of pucks, and a shot log. Click-and-drag from the launcher
-      at the bottom to aim and fire a puck; the drag length sets the
-      power. Physics (friction, wall bounces) runs on the source only,
-      and every mutation emits a <code>set</code> op. Those ops go
-      through <code>JSON.stringify</code> → <code>JSON.parse</code> →
-      <code>applyOps</code> onto a plain object that drives the right
-      court. Fire a puck, watch both sides animate identically, pause
-      (<kbd>space</kbd>), step a frame at a time (<kbd>→</kbd>), or turn
-      on "show state" to compare the raw JSON side-by-side. The two
-      panes should always agree down to the last bit.
-    </p>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>remjs mirror — event loop replication</title>
+  <style>
+    :root { color-scheme: dark; --font-sans: system-ui, -apple-system, sans-serif; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: var(--font-sans); background: #0d1117; color: #e6edf3; }
+    h1 { text-align: center; padding: 0.8em 0 0.2em; font-size: 1.3em; font-weight: 600; }
+    .hint { text-align: center; color: #8b949e; font-size: 0.85em; padding-bottom: 0.8em;
+      max-width: 700px; margin: 0 auto; line-height: 1.5; }
+    .hint code { background: #161b22; padding: 0.15em 0.4em; border-radius: 3px; font-size: 0.9em; }
+    .panels { display: flex; gap: 4px; padding: 0 4px 4px; height: calc(100vh - 100px); }
+    .panel { flex: 1; position: relative; border-radius: 6px; overflow: hidden; border: 1px solid #30363d; }
+    .panel-label { position: absolute; top: 0; left: 0; right: 0; z-index: 1;
+      font-size: 0.7em; text-transform: uppercase; letter-spacing: 0.06em;
+      padding: 6px 10px; background: rgba(13,17,23,0.85);
+      display: flex; justify-content: space-between; pointer-events: none; }
+    .panel-label .side { font-weight: 700; }
+    .source .side { color: #58a6ff; }
+    .mirror .side { color: #bc8cff; }
+    .panel iframe { width: 100%; height: 100%; border: 0; }
 
-    <div class="controls">
-      <label>speed: <input type="range" id="speed" min="0" max="200" value="100" step="5" /></label>
-      <span class="speed-value" id="speedVal">1.00×</span>
-      <button id="pause">pause</button>
-      <button id="stepOne">step ▸</button>
-      <label><input type="checkbox" id="readout" /> show state</label>
-      <label><input type="checkbox" id="trails" checked /> trails</label>
-      <label><input type="checkbox" id="delay" /> 250ms mirror lag</label>
-      <button id="reset">new game</button>
-    </div>
-
-    <div class="panes">
-      <div class="pane">
-        <h3>source — your court <span class="pulse" id="pulseSource"></span></h3>
-        <canvas id="source" width="560" height="420"></canvas>
-        <div class="hint-caption">click and drag from the launcher to aim &amp; fire</div>
-      </div>
-      <div class="pane">
-        <h3>mirror — rebuilt from op stream <span class="pulse" id="pulseMirror"></span></h3>
-        <canvas id="mirror" width="560" height="420"></canvas>
-        <div class="hint-caption">receives ops only; never touched by user</div>
-      </div>
-    </div>
-
-    <div class="stats">
-      <div class="stat"><div class="label">ops / sec</div><div class="value" id="opsPs">—</div></div>
-      <div class="stat"><div class="label">batches / sec</div><div class="value" id="batchesPs">—</div></div>
-      <div class="stat"><div class="label">wire bytes / sec</div><div class="value" id="bytesPs">—<span class="unit">KB</span></div></div>
-      <div class="stat"><div class="label">bytes / op</div><div class="value" id="bytesPerOp">—</div></div>
-      <div class="stat"><div class="label">frame cost</div><div class="value" id="frameMs">—<span class="unit">ms</span></div></div>
-    </div>
-
-    <div class="integrity" id="integrity">integrity: initialising…</div>
-
-    <div class="readout" id="readoutWrap">
-      <div class="pane">
-        <h4>
-          <span>source state (raw JS)</span>
-          <button id="copySource">copy</button>
-        </h4>
-        <pre id="sourceJson">—</pre>
-      </div>
-      <div class="pane">
-        <h4>
-          <span>mirror state (rebuilt from ops)</span>
-          <button id="copyMirror">copy</button>
-        </h4>
-        <pre id="mirrorJson">—</pre>
-      </div>
-    </div>
-
-    <p class="footer">
-      Single-file demo · <a href="https://github.com/anthropics/claude-code">remjs</a>
-    </p>
-
-    <!-- ───────────── remjs library (inlined IIFE bundle) ───────────── -->
-    <script>
-(function(){
-"use strict";
-/* ---------- proxy-symbol.js ---------- */
-/**
- * Internal symbols shared across the remjs runtime.
- *
- * Split into their own module to avoid a circular import between
- * proxy.ts, codec.ts, and registry.ts — each needs to refer to these
- * symbols but they all import from each other in various combinations.
- *
- * - `RAW` pulls the raw target out of a remjs proxy.
- * - `ID` is the registry-assigned object id, stored as a non-enumerable
- *   property on tracked objects so reads are O(1) and the id survives
- *   garbage collection of the registry's WeakMap entry. The WeakMap is
- *   still the source of truth for frozen objects (which can't be tagged).
- */
-const RAW = Symbol.for("remjs.raw");
-const ID = Symbol.for("remjs.id");
-
+    @media (max-width: 700px) {
+      .panels { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <h1>remjs mirror — shuffleboard</h1>
+  <p class="hint">
+    <strong>Left</strong> runs with real inputs. <strong>Right</strong> replays
+    recorded event-loop inputs (<code>Math.random</code>, <code>Date.now</code>,
+    DOM events) via <code>createPlayer</code>. Same code, same inputs, identical output.
+  </p>
+  <div class="panels">
+    <div class="panel source">
+      <div class="panel-label"><span class="side">source — real inputs</span></div>
+      <iframe id="sourceFrame" srcdoc="&lt;!doctype html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+&lt;head&gt;
+  &lt;meta charset=&quot;utf-8&quot; /&gt;
+  &lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot; /&gt;
+  &lt;title&gt;remjs — shuffleboard&lt;/title&gt;
+  &lt;style&gt;
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0d1117; overflow: hidden; }
+    canvas { display: block; width: 100%; height: 100vh; cursor: crosshair; }
+  &lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+  &lt;canvas id=&quot;canvas&quot;&gt;&lt;/canvas&gt;
+  &lt;script&gt;(function(){&quot;use strict&quot;;
 /* ---------- ops.js ---------- */
 /**
- * Op protocol for remjs.
+ * remjs v0.3 — Event Loop Op Protocol
  *
- * An Op describes a single mutation to a JS state graph. The source side
- * (a `JsObserver` from `observer.ts`, or a legacy `createStateStream`)
- * emits ops as mutations occur; the receiver applies them to reconstruct
- * identical state.
+ * Each op captures one event loop input: something that entered the JS
+ * runtime from the environment. The complete input surface is covered:
+ * DOM events, timer fires, network responses, non-deterministic values
+ * (random, clock), storage access, and navigation.
  *
- * v0.2 introduces ref-based addressing alongside path-based addressing.
- * Each op carries a `target` discriminated union: either a `path` (an
- * array of string keys walked from a single root, the v0.1 model) or a
- * `ref` (a stable object id from an `ObjectRegistry`, allowing graph
- * state with shared references and cycles).
- *
- * The wire format also gains a new tagged value type, `{ __remjs: "ref" }`,
- * which the encoder emits whenever a value is itself a ref-tracked object.
- * The decoder turns it into a placeholder that gets resolved during the
- * second pass of graph snapshot reconstruction.
- *
- * Backward compatibility: ops without a `target` field are accepted by the
- * receiver and rewritten on the fly to `target: { kind: "path", path }`,
- * so v0.1 op streams continue to apply cleanly.
+ * All ops are plain JSON — no tagged values, no __remjs encoding.
+ * The event loop input surface is made of primitives, strings, and
+ * simple structures that survive JSON round-trip without special handling.
  */
-/** Tag used to mark encoded special values that can't be represented as plain JSON. */
-const TAG = "__remjs";
-/**
- * Normalize a legacy v0.1 op (with top-level `path`) into the v0.2
- * shape (with `target: { kind: "path", path }`). Returns the input
- * unchanged if it already has a `target` field.
- *
- * The receiver runs every incoming op through this so a v0.1 sender
- * can talk to a v0.2 receiver without any sender-side changes.
- */
-function normalizeLegacyOp(op) {
-    if ("target" in op && op.target)
-        return op;
-    if (op.type === "snapshot")
-        return op;
-    const legacy = op;
-    if (!legacy.path) {
-        // No target, no path — only valid for snapshot, which we already returned.
-        return op;
-    }
-    return { ...op, target: { kind: "path", path: legacy.path } };
-}
-
-/* ---------- registry.js ---------- */
-/**
- * Object registry — stable id management for tracked JS objects.
- *
- * The JS-state analog of remdom's `NodeRegistry`. Assigns a UUID to
- * each tracked object on first observation, exposes bidirectional
- * lookup (`obj → id`, `id → obj`), and walks an object graph to assign
- * ids recursively (used at `track()` time and at `snapshot()` time).
- *
- * Storage:
- *   - A `WeakMap<object, string>` for the live `obj → id` lookup. Used
- *     so passing in a proxy (which has the raw target as a [[Target]])
- *     transparently maps to the underlying id.
- *   - A `Map<string, object>` for the `id → obj` lookup. **Strong** —
- *     the registry holds tracked objects alive for as long as it
- *     exists. The observer is the lifecycle manager: if you tracked it,
- *     you wanted it kept around until `destroy()` / `clear()`.
- *
- * Earlier versions used `WeakRef<object>` for the `id → obj` map. That
- * caused intermittent bugs where V8's GC would collect tracked roots
- * across async boundaries even when the host app held a module-level
- * strong reference, because the registry side had no strong link.
- * Strong references in the registry are the simpler and more
- * predictable contract — drop the registry to release the objects.
- *
- * Leaf types (Date, RegExp, BigInt, primitives) are not tracked —
- * they're encoded by value, never by reference.
- */
-
-/** If `obj` is a remjs proxy, return the raw target underneath; otherwise
- *  return `obj` unchanged. The registry uses the raw target as the key
- *  in its WeakMap so passing in a proxy works transparently. */
-function unwrapForLookup(obj) {
-    const raw = obj[RAW];
-    return raw === undefined || raw === null ? obj : raw;
-}
-/** Generate a fresh id. Uses crypto.randomUUID where available, falls
- *  back to a Math.random hex string elsewhere. Matches remdom's format. */
-function generateId() {
-    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-        return crypto.randomUUID();
-    }
-    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-        const r = (Math.random() * 16) | 0;
-        return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
-    });
-}
-/** True for objects that should be tracked by reference (and thus get
- *  an id). Leaf types are encoded by value and don't get ids. */
-function isTrackable(v) {
-    if (v === null || typeof v !== "object")
-        return false;
-    if (v instanceof Date)
-        return false;
-    if (v instanceof RegExp)
-        return false;
-    return true;
-}
-function createObjectRegistry() {
-    const objToId = new WeakMap();
-    const idToObj = new Map();
-    function assignId(obj) {
-        const target = unwrapForLookup(obj);
-        const cached = objToId.get(target);
-        if (cached)
-            return cached;
-        const id = generateId();
-        objToId.set(target, id);
-        idToObj.set(id, target);
-        return id;
-    }
-    function adopt(obj, id) {
-        const target = unwrapForLookup(obj);
-        const existing = objToId.get(target);
-        if (existing) {
-            if (existing !== id) {
-                throw new Error(`remjs: cannot adopt id ${id} for object that already has id ${existing}`);
-            }
-            return;
-        }
-        objToId.set(target, id);
-        idToObj.set(id, target);
-    }
-    function getIdOf(obj) {
-        return objToId.get(unwrapForLookup(obj)) ?? null;
-    }
-    function getObjectById(id) {
-        return idToObj.get(id) ?? null;
-    }
-    function walkAndAssign(root) {
-        if (!isTrackable(root))
-            return;
-        const seen = new WeakSet();
-        const stack = [root];
-        while (stack.length > 0) {
-            const obj = stack.pop();
-            if (seen.has(obj))
-                continue;
-            seen.add(obj);
-            assignId(obj);
-            if (obj instanceof Map) {
-                for (const [k, v] of obj) {
-                    if (isTrackable(k))
-                        stack.push(k);
-                    if (isTrackable(v))
-                        stack.push(v);
-                }
-                continue;
-            }
-            if (obj instanceof Set) {
-                for (const v of obj) {
-                    if (isTrackable(v))
-                        stack.push(v);
-                }
-                continue;
-            }
-            if (Array.isArray(obj)) {
-                for (let i = 0; i < obj.length; i++) {
-                    const v = obj[i];
-                    if (isTrackable(v))
-                        stack.push(v);
-                }
-                continue;
-            }
-            // Plain object — walk its own enumerable string keys. Symbol-keyed
-            // properties (including our own ID symbol) are intentionally skipped.
-            for (const k of Object.keys(obj)) {
-                const v = obj[k];
-                if (isTrackable(v))
-                    stack.push(v);
-            }
-        }
-    }
-    function* entries() {
-        yield* idToObj;
-    }
-    function clear() {
-        idToObj.clear();
-        // The WeakMap can't be cleared directly; it'll GC naturally as
-        // references die. The next assignId on a previously-tracked object
-        // will see no entry and assign a fresh id.
-    }
-    return { assignId, adopt, getIdOf, getObjectById, walkAndAssign, entries, clear };
-}
 
 /* ---------- codec.js ---------- */
 /**
- * Value encoding/decoding.
+ * remjs v0.3 — Codec
  *
- * `encode` turns an arbitrary JS value into a JSON-safe `EncodedValue`,
- * handling all the built-in types that plain JSON can't express.
- * `decode` is the inverse.
- *
- * v0.2 adds **ref encoding**. When the encoder is given an `EncodeOptions`
- * with a `refOf(obj)` callback, any tracked object encountered during
- * the walk (other than the top-level value itself) is emitted as
- * `{ __remjs: "ref", id }` rather than recursively encoded. The decoder
- * with a matching `resolveRef(id)` callback patches refs back to live
- * objects on the receiver side. This is what makes graph state with
- * shared references and cycles round-trip cleanly.
- *
- * Encoding rules:
- *   - Plain objects and arrays recurse normally.
- *   - Special types (undefined, Date, Map, Set, RegExp, BigInt, NaN,
- *     ±Infinity) are wrapped with the reserved `__remjs` tag key.
- *   - Tracked objects (per `refOf`) are encoded as `{ __remjs: "ref", id }`
- *     when they appear nested inside another value. The top-level value
- *     itself is always encoded by content — that's how a snapshot entry
- *     describes the object the entry is FOR rather than describing a ref
- *     to it.
- *
- * Backward compat: when called without `refOf`, the encoder behaves
- * identically to the v0.1 codec. The four current demos use this path
- * via the `createStateStream` alias.
+ * Ops are plain JSON — no special encoding needed. The codec is a thin
+ * abstraction so transport layers can swap in msgpack or protobuf later.
  */
+const jsonCodec = {
+    encode(op) {
+        return JSON.stringify(op);
+    },
+    decode(data) {
+        return JSON.parse(data);
+    },
+    encodeBatch(ops) {
+        return JSON.stringify(ops);
+    },
+    decodeBatch(data) {
+        return JSON.parse(data);
+    },
+};
 
-
-function isTagged(v) {
-    return typeof v === "object" && v !== null && TAG in v;
-}
-/** If the value is a remjs proxy, return its raw target; otherwise return as-is. */
-function unwrapRaw(v) {
-    if (v !== null && typeof v === "object" && v[RAW]) {
-        return v[RAW];
-    }
-    return v;
-}
+/* ---------- patches/clock.js ---------- */
 /**
- * Encode a value for transmission. Default "value" mode treats trackable
- * objects as references — a new object becomes a `newobj` tag, an existing
- * tracked one becomes a `ref` tag. Nested values inside any encoded
- * structure are also encoded in value mode, so a deeply-nested new object
- * also gets its own newobj tag.
+ * Clock patch — intercepts Date.now() and performance.now().
  *
- * Used by ops (`op.value`, `op.key`) where the value being transmitted
- * may be a new object that needs to be introduced into the receiver's
- * registry.
+ * Records the actual value returned so replicas produce identical
+ * timestamps without needing synchronized clocks.
  */
-function encode(value, opts = {}) {
-    return encodeInner(value, opts, "value");
-}
-/**
- * Encode a tracked object's CONTENTS (its own fields/items), not as a
- * ref to itself. Nested tracked objects inside the contents are still
- * encoded in value mode (so they appear as ref tags in the output).
- *
- * Used by the snapshot builder, where each entry's `encoded` field
- * describes the object the entry is FOR rather than referring to it.
- */
-function encodeContents(value, opts = {}) {
-    return encodeInner(value, opts, "content");
-}
-function encodeInner(value, opts, mode) {
-    const v = unwrapRaw(value);
-    if (v === null)
-        return null;
-    if (v === undefined)
-        return { [TAG]: "undef" };
-    const t = typeof v;
-    if (t === "string" || t === "boolean")
-        return v;
-    if (t === "number") {
-        const n = v;
-        if (Number.isNaN(n))
-            return { [TAG]: "nan" };
-        if (n === Infinity)
-            return { [TAG]: "inf" };
-        if (n === -Infinity)
-            return { [TAG]: "ninf" };
-        return n;
-    }
-    if (t === "bigint")
-        return { [TAG]: "bigint", v: v.toString() };
-    if (v instanceof Date)
-        return { [TAG]: "date", v: v.getTime() };
-    if (v instanceof RegExp)
-        return { [TAG]: "regex", src: v.source, flags: v.flags };
-    // Ref / newobj encoding (only in "value" mode — "content" mode skips
-    // straight to the structural walk so the top-level object is described
-    // by its fields rather than wrapped in a tag).
-    if (mode === "value" && t === "object" && v !== null) {
-        if (opts.refOf) {
-            const id = opts.refOf(v);
-            if (id !== null) {
-                return { [TAG]: "ref", id };
-            }
-        }
-        if (opts.assignId) {
-            const id = opts.assignId(v);
-            const kind = v instanceof Map
-                ? "map"
-                : v instanceof Set
-                    ? "set"
-                    : Array.isArray(v)
-                        ? "array"
-                        : "object";
-            return {
-                [TAG]: "newobj",
-                id,
-                kind,
-                contents: encodeInner(v, opts, "content"),
-            };
-        }
-    }
-    // Structural walk (used for "content" mode and as a fallback when no
-    // ref/newobj options are provided). Nested values are encoded in
-    // "value" mode so deeply-nested new objects get their own tags.
-    if (v instanceof Map) {
-        const entries = [];
-        for (const [k, val] of v) {
-            entries.push([encodeInner(k, opts, "value"), encodeInner(val, opts, "value")]);
-        }
-        return { [TAG]: "map", entries };
-    }
-    if (v instanceof Set) {
-        const values = [];
-        for (const val of v)
-            values.push(encodeInner(val, opts, "value"));
-        return { [TAG]: "set", values };
-    }
-    if (Array.isArray(v)) {
-        return v.map((item) => encodeInner(item, opts, "value"));
-    }
-    if (t === "object") {
-        const out = {};
-        for (const k of Object.keys(v)) {
-            out[k] = encodeInner(v[k], opts, "value");
-        }
-        return out;
-    }
-    throw new Error(`remjs: cannot encode value of type ${t}`);
-}
-function decode(value, opts = {}) {
-    if (value === null)
-        return null;
-    const t = typeof value;
-    if (t !== "object")
+function installClockPatch(emit) {
+    const origDateNow = Date.now;
+    const origPerfNow = typeof performance !== &quot;undefined&quot; ? performance.now.bind(performance) : null;
+    Date.now = function () {
+        const value = origDateNow.call(Date);
+        emit({ type: &quot;clock&quot;, source: &quot;dateNow&quot;, value });
         return value;
-    if (Array.isArray(value))
-        return value.map((item) => decode(item, opts));
-    if (isTagged(value)) {
-        const tag = value[TAG];
-        switch (tag) {
-            case "undef":
-                return undefined;
-            case "nan":
-                return NaN;
-            case "inf":
-                return Infinity;
-            case "ninf":
-                return -Infinity;
-            case "bigint":
-                return BigInt(value.v);
-            case "date":
-                return new Date(value.v);
-            case "regex":
-                return new RegExp(value.src, value.flags);
-            case "map": {
-                const m = new Map();
-                for (const [k, v] of value.entries) {
-                    m.set(decode(k, opts), decode(v, opts));
-                }
-                return m;
-            }
-            case "set": {
-                const s = new Set();
-                for (const v of value.values) {
-                    s.add(decode(v, opts));
-                }
-                return s;
-            }
-            case "ref": {
-                const id = value.id;
-                if (opts.resolveRef) {
-                    const resolved = opts.resolveRef(id);
-                    if (resolved !== null)
-                        return resolved;
-                }
-                // Resolver missing or didn't know this id — return a placeholder
-                // marker that the caller can detect and patch in a second pass.
-                return makeRefPlaceholder(id);
-            }
-            case "newobj": {
-                // Build the right shaped placeholder, register it with the
-                // supplied id, then hydrate it from the contents. Adopt-first
-                // means a self-referential newobj (object whose own contents
-                // contain a ref back to itself) resolves cleanly during the
-                // contents decode below.
-                const tagged = value;
-                let placeholder;
-                switch (tagged.kind) {
-                    case "array":
-                        placeholder = [];
-                        break;
-                    case "map":
-                        placeholder = new Map();
-                        break;
-                    case "set":
-                        placeholder = new Set();
-                        break;
-                    default:
-                        placeholder = {};
-                }
-                if (opts.adoptObject)
-                    opts.adoptObject(tagged.id, placeholder);
-                const decoded = decode(tagged.contents, opts);
-                // Copy decoded contents into the placeholder so the placeholder
-                // is the canonical instance (in case anything already holds a
-                // reference to it via the registry).
-                if (placeholder instanceof Map && decoded instanceof Map) {
-                    for (const [k, v] of decoded)
-                        placeholder.set(k, v);
-                }
-                else if (placeholder instanceof Set && decoded instanceof Set) {
-                    for (const v of decoded)
-                        placeholder.add(v);
-                }
-                else if (Array.isArray(placeholder) && Array.isArray(decoded)) {
-                    for (const item of decoded)
-                        placeholder.push(item);
-                }
-                else if (typeof decoded === "object" &&
-                    decoded !== null &&
-                    !Array.isArray(decoded)) {
-                    for (const k of Object.keys(decoded)) {
-                        placeholder[k] = decoded[k];
-                    }
-                }
-                return placeholder;
-            }
-            default:
-                throw new Error(`remjs: unknown tag ${tag}`);
-        }
-    }
-    const out = {};
-    for (const k of Object.keys(value)) {
-        out[k] = decode(value[k], opts);
-    }
-    return out;
-}
-/* ── Ref placeholders ─────────────────────────────────────────────── */
-const REF_PLACEHOLDER = Symbol.for("remjs.ref-placeholder");
-function makeRefPlaceholder(id) {
-    return { [REF_PLACEHOLDER]: true, id };
-}
-function isRefPlaceholder(v) {
-    return (typeof v === "object" &&
-        v !== null &&
-        v[REF_PLACEHOLDER] === true);
-}
-function getRefPlaceholderId(v) {
-    return v.id;
-}
-
-/* ---------- proxy.js ---------- */
-/**
- * Deep proxy wrapping for state objects and graphs.
- *
- * `wrap(target, registry, emit)` returns a proxy over `target` that
- * emits an Op whenever the target is mutated. Nested objects returned
- * from reads are wrapped lazily with the same registry and `emit`
- * callback, so mutations through any path in the graph are tracked.
- *
- * Each tracked object gets a stable id from the registry; emitted ops
- * carry `target: { kind: "ref", id, prop }` so the receiver can mutate
- * the exact object regardless of which path it was reached through.
- * Shared references and cycles work because the registry assigns the
- * same id to the same target on every walk.
- */
-
-
-const proxyCache = new WeakMap();
-function isWrappable(v) {
-    if (v === null || typeof v !== "object")
-        return false;
-    if (v instanceof Date)
-        return false;
-    if (v instanceof RegExp)
-        return false;
-    return true;
-}
-function unwrap(v) {
-    if (v !== null && typeof v === "object" && v[RAW]) {
-        return v[RAW];
-    }
-    return v;
-}
-/** Encode helper bundle for the proxy. Emits refs for already-tracked
- *  objects and newobj tags (with freshly-assigned ids) for new ones, so
- *  the receiver can adopt every id this op introduces. */
-function makeEncodeOpts(registry) {
-    return {
-        refOf: (obj) => registry.getIdOf(obj),
-        assignId: (obj) => registry.assignId(obj),
     };
-}
-/**
- * Wrap a target object in a proxy that emits ops on mutation.
- *
- * @param target — the raw object to wrap (must not already be a proxy)
- * @param registry — the ObjectRegistry that owns id assignment
- * @param emit — callback that receives each op as it's produced
- */
-function wrap(target, registry, emit) {
-    if (!isWrappable(target))
-        return target;
-    const cached = proxyCache.get(target);
-    if (cached)
-        return cached;
-    // Assign an id eagerly so the registry knows about this object before
-    // any of its children are walked.
-    registry.assignId(target);
-    let proxy;
-    if (target instanceof Map) {
-        proxy = wrapMap(target, registry, emit);
-    }
-    else if (target instanceof Set) {
-        proxy = wrapSet(target, registry, emit);
-    }
-    else {
-        proxy = wrapObject(target, registry, emit);
-    }
-    proxyCache.set(target, proxy);
-    return proxy;
-}
-function wrapObject(target, registry, emit) {
-    const encodeOpts = makeEncodeOpts(registry);
-    return new Proxy(target, {
-        get(t, prop, receiver) {
-            if (prop === RAW)
-                return t;
-            const value = Reflect.get(t, prop, receiver);
-            if (typeof prop === "symbol")
-                return value;
-            if (isWrappable(value)) {
-                return wrap(value, registry, emit);
-            }
+    if (origPerfNow &amp;&amp; typeof performance !== &quot;undefined&quot;) {
+        performance.now = function () {
+            const value = origPerfNow();
+            emit({ type: &quot;clock&quot;, source: &quot;performanceNow&quot;, value });
             return value;
-        },
-        set(t, prop, value, receiver) {
-            if (typeof prop === "symbol") {
-                return Reflect.set(t, prop, value, receiver);
-            }
-            const rawValue = unwrap(value);
-            const result = Reflect.set(t, prop, rawValue, receiver);
-            if (result) {
-                emit({
-                    type: "set",
-                    target: makeChildTarget(target, prop, registry),
-                    value: encode(rawValue, encodeOpts),
-                });
+        };
+    }
+    return function uninstall() {
+        Date.now = origDateNow;
+        if (origPerfNow &amp;&amp; typeof performance !== &quot;undefined&quot;) {
+            performance.now = origPerfNow;
+        }
+    };
+}
+
+/* ---------- patches/random.js ---------- */
+/**
+ * Random patch — intercepts Math.random() and crypto.getRandomValues().
+ *
+ * Records the actual values returned so replicas produce identical
+ * &quot;random&quot; sequences.
+ */
+function installRandomPatch(emit) {
+    const origRandom = Math.random;
+    const origCrypto = typeof globalThis.crypto !== &quot;undefined&quot; &amp;&amp;
+        typeof globalThis.crypto.getRandomValues === &quot;function&quot;
+        ? globalThis.crypto.getRandomValues.bind(globalThis.crypto)
+        : null;
+    Math.random = function () {
+        const value = origRandom();
+        emit({ type: &quot;random&quot;, source: &quot;math&quot;, values: [value] });
+        return value;
+    };
+    if (origCrypto &amp;&amp; typeof globalThis.crypto !== &quot;undefined&quot;) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        globalThis.crypto.getRandomValues = function (array) {
+            const result = origCrypto(array);
+            if (result &amp;&amp; ArrayBuffer.isView(result)) {
+                const values = Array.from(new Uint8Array(result.buffer, result.byteOffset, result.byteLength));
+                emit({ type: &quot;random&quot;, source: &quot;crypto&quot;, values });
             }
             return result;
-        },
-        deleteProperty(t, prop) {
-            if (typeof prop === "symbol")
-                return Reflect.deleteProperty(t, prop);
-            const result = Reflect.deleteProperty(t, prop);
-            if (result) {
+        };
+    }
+    return function uninstall() {
+        Math.random = origRandom;
+        if (origCrypto &amp;&amp; typeof globalThis.crypto !== &quot;undefined&quot;) {
+            globalThis.crypto.getRandomValues = origCrypto;
+        }
+    };
+}
+
+/* ---------- patches/timers.js ---------- */
+/**
+ * Timer patch — intercepts setTimeout, setInterval, clearTimeout, clearInterval.
+ *
+ * Assigns monotonic sequence numbers so leader and follower can match
+ * timer registrations without sharing raw browser timer IDs.
+ * Records a TimerOp when the callback actually fires.
+ *
+ * requestAnimationFrame is browser-only; skipped in this patch (added
+ * in the events patch or a browser-specific extension).
+ */
+function installTimerPatch(emit) {
+    const origSetTimeout = globalThis.setTimeout;
+    const origSetInterval = globalThis.setInterval;
+    const origClearTimeout = globalThis.clearTimeout;
+    const origClearInterval = globalThis.clearInterval;
+    const patchState = {
+        seqMap: new Map(),
+        callbackMap: new Map(),
+        nextSeq: 0,
+    };
+    globalThis.setTimeout = function (callback, delay, ...args) {
+        const seq = patchState.nextSeq++;
+        const fn = typeof callback === &quot;string&quot; ? () =&gt; eval(callback) : callback;
+        const rawId = origSetTimeout.call(globalThis, (...cbArgs) =&gt; {
+            patchState.seqMap.delete(rawId);
+            patchState.callbackMap.delete(seq);
+            emit({
+                type: &quot;timer&quot;,
+                kind: &quot;timeout&quot;,
+                seq,
+                scheduledDelay: delay ?? 0,
+                actualTime: Date.now(),
+            });
+            fn(...cbArgs);
+        }, delay, ...args);
+        patchState.seqMap.set(rawId, seq);
+        patchState.callbackMap.set(seq, fn);
+        return rawId;
+    };
+    globalThis.setInterval = function (callback, delay, ...args) {
+        const seq = patchState.nextSeq++;
+        const fn = typeof callback === &quot;string&quot; ? () =&gt; eval(callback) : callback;
+        const rawId = origSetInterval.call(globalThis, (...cbArgs) =&gt; {
+            emit({
+                type: &quot;timer&quot;,
+                kind: &quot;interval&quot;,
+                seq,
+                scheduledDelay: delay ?? 0,
+                actualTime: Date.now(),
+            });
+            fn(...cbArgs);
+        }, delay, ...args);
+        patchState.seqMap.set(rawId, seq);
+        patchState.callbackMap.set(seq, fn);
+        return rawId;
+    };
+    globalThis.clearTimeout = function (id) {
+        if (id !== undefined) {
+            const seq = patchState.seqMap.get(id);
+            if (seq !== undefined) {
+                patchState.seqMap.delete(id);
+                patchState.callbackMap.delete(seq);
+            }
+        }
+        origClearTimeout.call(globalThis, id);
+    };
+    globalThis.clearInterval = function (id) {
+        if (id !== undefined) {
+            const seq = patchState.seqMap.get(id);
+            if (seq !== undefined) {
+                patchState.seqMap.delete(id);
+                patchState.callbackMap.delete(seq);
+            }
+        }
+        origClearInterval.call(globalThis, id);
+    };
+    function uninstall() {
+        globalThis.setTimeout = origSetTimeout;
+        globalThis.setInterval = origSetInterval;
+        globalThis.clearTimeout = origClearTimeout;
+        globalThis.clearInterval = origClearInterval;
+        patchState.seqMap.clear();
+        patchState.callbackMap.clear();
+    }
+    return { uninstall, state: patchState };
+}
+
+/* ---------- patches/network.js ---------- */
+/**
+ * Network patch — intercepts fetch().
+ *
+ * Assigns monotonic sequence numbers to each request. Records the
+ * response (status, content-type header, text body) when it resolves.
+ * XMLHttpRequest interception deferred to a future patch.
+ */
+function installNetworkPatch(emit) {
+    const origFetch = globalThis.fetch;
+    let nextSeq = 0;
+    globalThis.fetch = async function (input, init) {
+        const seq = nextSeq++;
+        const url = typeof input === &quot;string&quot; ? input : input instanceof URL ? input.href : input.url;
+        const method = init?.method ?? &quot;GET&quot;;
+        const response = await origFetch.call(globalThis, input, init);
+        // Clone so we can read the body without consuming the original
+        const clone = response.clone();
+        let body = null;
+        try {
+            body = await clone.text();
+        }
+        catch {
+            body = null;
+        }
+        emit({
+            type: &quot;network&quot;,
+            kind: &quot;fetch&quot;,
+            seq,
+            url,
+            method,
+            status: response.status,
+            headers: { &quot;content-type&quot;: response.headers.get(&quot;content-type&quot;) ?? &quot;&quot; },
+            body,
+        });
+        return response;
+    };
+    return function uninstall() {
+        globalThis.fetch = origFetch;
+    };
+}
+
+/* ---------- patches/storage.js ---------- */
+/**
+ * Storage patch — intercepts localStorage and sessionStorage.
+ *
+ * Records get/set/remove operations so replicas have identical
+ * storage state without needing shared persistence.
+ */
+function patchStorage(storage, kind, emit) {
+    const origGetItem = storage.getItem.bind(storage);
+    const origSetItem = storage.setItem.bind(storage);
+    const origRemoveItem = storage.removeItem.bind(storage);
+    storage.getItem = function (key) {
+        const value = origGetItem(key);
+        emit({ type: &quot;storage&quot;, kind, action: &quot;get&quot;, key, value });
+        return value;
+    };
+    storage.setItem = function (key, value) {
+        origSetItem(key, value);
+        emit({ type: &quot;storage&quot;, kind, action: &quot;set&quot;, key, value });
+    };
+    storage.removeItem = function (key) {
+        origRemoveItem(key);
+        emit({ type: &quot;storage&quot;, kind, action: &quot;remove&quot;, key, value: null });
+    };
+    return function uninstall() {
+        storage.getItem = origGetItem;
+        storage.setItem = origSetItem;
+        storage.removeItem = origRemoveItem;
+    };
+}
+function installStoragePatch(emit) {
+    const uninstallers = [];
+    if (typeof globalThis.localStorage !== &quot;undefined&quot;) {
+        uninstallers.push(patchStorage(globalThis.localStorage, &quot;local&quot;, emit));
+    }
+    if (typeof globalThis.sessionStorage !== &quot;undefined&quot;) {
+        uninstallers.push(patchStorage(globalThis.sessionStorage, &quot;session&quot;, emit));
+    }
+    return function uninstall() {
+        for (const fn of uninstallers)
+            fn();
+    };
+}
+
+/* ---------- target.js ---------- */
+/**
+ * Element targeting — generates deterministic CSS selector paths.
+ *
+ * Given a DOM element, produces a selector string that uniquely
+ * identifies it in the document. Uses tag#id when available,
+ * falls back to tag:nth-child(n) ancestry chains.
+ */
+function getTargetPath(element) {
+    if (element === document.documentElement)
+        return &quot;html&quot;;
+    if (element === document.body)
+        return &quot;body&quot;;
+    const parts = [];
+    let current = element;
+    while (current &amp;&amp; current !== document.documentElement) {
+        const tag = current.tagName.toLowerCase();
+        if (current.id) {
+            parts.unshift(`${tag}#${current.id}`);
+            break;
+        }
+        const parent = current.parentElement;
+        if (!parent) {
+            parts.unshift(tag);
+            break;
+        }
+        const siblings = Array.from(parent.children);
+        const sameTag = siblings.filter((s) =&gt; s.tagName === current.tagName);
+        if (sameTag.length === 1) {
+            parts.unshift(tag);
+        }
+        else {
+            const index = sameTag.indexOf(current) + 1;
+            parts.unshift(`${tag}:nth-of-type(${index})`);
+        }
+        current = parent;
+    }
+    return parts.join(&quot; &gt; &quot;);
+}
+function resolveTargetPath(path) {
+    try {
+        return document.querySelector(path);
+    }
+    catch {
+        return null;
+    }
+}
+
+/* ---------- patches/events.js ---------- */
+/**
+ * Event patch — intercepts addEventListener to record DOM events.
+ *
+ * When a registered event handler fires, records an EventOp with
+ * the target's CSS selector path and event-specific details.
+ */
+
+/** Extract serializable details from a DOM event. */
+function extractDetail(event) {
+    const detail = {};
+    if (event instanceof MouseEvent) {
+        detail.clientX = event.clientX;
+        detail.clientY = event.clientY;
+        detail.button = event.button;
+        detail.buttons = event.buttons;
+    }
+    if (event instanceof KeyboardEvent) {
+        detail.key = event.key;
+        detail.code = event.code;
+        detail.altKey = event.altKey;
+        detail.ctrlKey = event.ctrlKey;
+        detail.shiftKey = event.shiftKey;
+        detail.metaKey = event.metaKey;
+    }
+    if (event instanceof InputEvent) {
+        detail.data = event.data;
+        detail.inputType = event.inputType;
+    }
+    // Capture input/textarea/select value for input/change events
+    if ((event.type === &quot;input&quot; || event.type === &quot;change&quot;) &amp;&amp;
+        event.target &amp;&amp;
+        &quot;value&quot; in event.target) {
+        detail.value = event.target.value;
+    }
+    if (event.type === &quot;scroll&quot; &amp;&amp; event.target) {
+        const el = event.target;
+        detail.scrollTop = el.scrollTop;
+        detail.scrollLeft = el.scrollLeft;
+    }
+    return detail;
+}
+function installEventPatch(emit) {
+    const origAddEventListener = EventTarget.prototype.addEventListener;
+    const origRemoveEventListener = EventTarget.prototype.removeEventListener;
+    // Track wrapped handlers so removeEventListener works correctly
+    const wrapperMap = new WeakMap();
+    EventTarget.prototype.addEventListener = function (type, listener, options) {
+        if (!listener) {
+            return origAddEventListener.call(this, type, listener, options);
+        }
+        const handler = typeof listener === &quot;function&quot; ? listener : listener.handleEvent.bind(listener);
+        const self = this;
+        const wrapper = function (event) {
+            // Only record events on DOM elements (not on window timers etc.)
+            if (event.target instanceof Element) {
                 emit({
-                    type: "delete",
-                    target: makeChildTarget(target, prop, registry),
+                    type: &quot;event&quot;,
+                    eventType: event.type,
+                    targetPath: getTargetPath(event.target),
+                    timestamp: event.timeStamp,
+                    detail: extractDetail(event),
                 });
             }
-            return result;
-        },
-    });
-}
-function wrapMap(target, registry, emit) {
-    const encodeOpts = makeEncodeOpts(registry);
-    const proxy = new Proxy(target, {
-        get(t, prop) {
-            if (prop === RAW)
-                return t;
-            if (prop === "set") {
-                return (k, v) => {
-                    const rawK = unwrap(k);
-                    const rawV = unwrap(v);
-                    t.set(rawK, rawV);
-                    emit({
-                        type: "mapSet",
-                        target: makeSelfTarget(target, registry),
-                        key: encode(rawK, encodeOpts),
-                        value: encode(rawV, encodeOpts),
-                    });
-                    return proxy;
-                };
-            }
-            if (prop === "delete") {
-                return (k) => {
-                    const rawK = unwrap(k);
-                    const existed = t.delete(rawK);
-                    if (existed) {
-                        emit({
-                            type: "mapDelete",
-                            target: makeSelfTarget(target, registry),
-                            key: encode(rawK, encodeOpts),
-                        });
-                    }
-                    return existed;
-                };
-            }
-            if (prop === "clear") {
-                return () => {
-                    if (t.size > 0) {
-                        t.clear();
-                        emit({
-                            type: "mapClear",
-                            target: makeSelfTarget(target, registry),
-                        });
-                    }
-                };
-            }
-            const val = Reflect.get(t, prop, t);
-            return typeof val === "function" ? val.bind(t) : val;
-        },
-    });
-    return proxy;
-}
-function wrapSet(target, registry, emit) {
-    const encodeOpts = makeEncodeOpts(registry);
-    const proxy = new Proxy(target, {
-        get(t, prop) {
-            if (prop === RAW)
-                return t;
-            if (prop === "add") {
-                return (v) => {
-                    const rawV = unwrap(v);
-                    if (!t.has(rawV)) {
-                        t.add(rawV);
-                        emit({
-                            type: "setAdd",
-                            target: makeSelfTarget(target, registry),
-                            value: encode(rawV, encodeOpts),
-                        });
-                    }
-                    return proxy;
-                };
-            }
-            if (prop === "delete") {
-                return (v) => {
-                    const rawV = unwrap(v);
-                    const existed = t.delete(rawV);
-                    if (existed) {
-                        emit({
-                            type: "setDelete",
-                            target: makeSelfTarget(target, registry),
-                            value: encode(rawV, encodeOpts),
-                        });
-                    }
-                    return existed;
-                };
-            }
-            if (prop === "clear") {
-                return () => {
-                    if (t.size > 0) {
-                        t.clear();
-                        emit({
-                            type: "setClear",
-                            target: makeSelfTarget(target, registry),
-                        });
-                    }
-                };
-            }
-            const val = Reflect.get(t, prop, t);
-            return typeof val === "function" ? val.bind(t) : val;
-        },
-    });
-    return proxy;
-}
-/* ── Target construction ─────────────────────────────────────────── */
-/** Build the `target` field for an op that affects a property of `parent`. */
-function makeChildTarget(parent, prop, registry) {
-    return {
-        kind: "ref",
-        id: registry.assignId(parent),
-        prop,
+            return handler.call(this, event);
+        };
+        wrapperMap.set(handler, wrapper);
+        return origAddEventListener.call(self, type, wrapper, options);
     };
-}
-/** Build the `target` field for an op that affects the wrapped object
- *  itself (e.g. mapClear, setAdd — the target IS the Map/Set). */
-function makeSelfTarget(target, registry) {
-    return {
-        kind: "ref",
-        id: registry.assignId(target),
+    EventTarget.prototype.removeEventListener = function (type, listener, options) {
+        if (!listener) {
+            return origRemoveEventListener.call(this, type, listener, options);
+        }
+        const handler = typeof listener === &quot;function&quot; ? listener : listener.handleEvent.bind(listener);
+        const wrapper = wrapperMap.get(handler);
+        if (wrapper) {
+            wrapperMap.delete(handler);
+            return origRemoveEventListener.call(this, type, wrapper, options);
+        }
+        return origRemoveEventListener.call(this, type, listener, options);
+    };
+    return function uninstall() {
+        EventTarget.prototype.addEventListener = origAddEventListener;
+        EventTarget.prototype.removeEventListener = origRemoveEventListener;
     };
 }
 
-/* ---------- apply.js ---------- */
+/* ---------- recorder.js ---------- */
 /**
- * Receiver-side op application.
+ * Recorder — captures event loop inputs as ops.
  *
- * `applyOp` / `applyOps` take a state graph and mutate it in place to
- * match the sender's state. The receiver maintains its own
- * `ObjectRegistry` that mirrors the source's id space — when an
- * incoming op carries a ref-based target, the receiver looks up the
- * id in its own registry to find the target object to mutate.
- *
- * v0.2 supports two op-target shapes:
- *  - **Path** (`target.kind === "path"`): walk a path from the snapshot
- *    root, mutate the leaf. v0.1 model. Used by the `createStateStream`
- *    legacy alias and tree-shaped state.
- *  - **Ref** (`target.kind === "ref"`): look up the target object by id
- *    in the receiver's registry, mutate the named property. v0.2 model.
- *    Used by `createObserver` and graph-shaped state.
- *
- * Snapshot ops come in two flavors:
- *  - **Tree snapshot** (v0.1): a single encoded value at the root.
- *    `decode`d directly and returned as the new root.
- *  - **Graph snapshot** (v0.2): a flat list of `{id, encoded}` entries.
- *    Two-pass reconstruction: phase 1 builds empty placeholder objects
- *    of the right type and registers them by id; phase 2 fills in each
- *    placeholder with decoded contents, with refs resolved against the
- *    just-built registry.
- *
- * Backward compat: v0.1 ops with a top-level `path` field (no `target`)
- * are normalized via `normalizeLegacyOp` before dispatch.
+ * Installs monkey-patches on enabled subsystems (events, timers,
+ * network, random, clock, storage), batches emitted ops, and
+ * delivers them via the onOps callback.
  */
-
-
-
-/* ── Path resolution ──────────────────────────────────────────────── */
-function walkPath(root, path) {
-    let current = root;
-    for (const key of path) {
-        if (current === null || current === undefined) {
-            throw new Error(`remjs: cannot walk path ${path.join(".")} — encountered nullish at ${key}`);
-        }
-        current = current[key];
-    }
-    return current;
-}
-/** Resolve a target to `{ parent, key }` for ops that mutate a property,
- *  or `{ target, key: null }` for ops that mutate the target itself
- *  (mapClear, setAdd, etc). */
-function resolveTarget(root, registry, target) {
-    if (target.kind === "path") {
-        if (target.path.length === 0) {
-            return { container: root, key: null };
-        }
-        const parentPath = target.path.slice(0, -1);
-        const key = target.path[target.path.length - 1];
-        const parent = walkPath(root, parentPath);
-        return { container: parent, key };
-    }
-    // Ref-based: look up the object by id in the receiver's registry.
-    const obj = registry.getObjectById(target.id);
-    if (!obj) {
-        throw new Error(`remjs: cannot resolve ref id ${target.id} — not in receiver registry. Did you miss a snapshot?`);
-    }
-    return { container: obj, key: target.prop ?? null };
-}
-/* ── Op application ───────────────────────────────────────────────── */
-/**
- * Apply a single op to `root`. Returns the (possibly new) root.
- *
- * For most op types the root is mutated in place and returned unchanged.
- * For `snapshot` ops a brand-new root is constructed and returned, so
- * callers must always re-bind to the return value.
- *
- * The `registry` parameter is the receiver's own ObjectRegistry. It's
- * populated by snapshot ops (which assign ids to reconstructed objects)
- * and used by ref-target resolution. For pure path-addressed op streams
- * (legacy v0.1) the registry is unused but must still be provided.
- */
-function applyOp(root, op, registry) {
-    // Normalize legacy v0.1 ops (top-level `path`) into the v0.2 shape.
-    op = normalizeLegacyOp(op);
-    switch (op.type) {
-        case "snapshot":
-            return applySnapshot(op, registry);
-        case "set": {
-            const decodeOpts = makeDecodeOpts(registry);
-            const value = decode(op.value, decodeOpts);
-            const { container, key } = resolveTarget(root, registry, op.target);
-            if (key === null) {
-                throw new Error("remjs: cannot apply set op with empty target");
-            }
-            container[key] = value;
-            return root;
-        }
-        case "delete": {
-            const { container, key } = resolveTarget(root, registry, op.target);
-            if (key === null) {
-                throw new Error("remjs: cannot apply delete op with empty target");
-            }
-            delete container[key];
-            return root;
-        }
-        case "mapSet": {
-            const decodeOpts = makeDecodeOpts(registry);
-            const { container } = resolveTarget(root, registry, op.target);
-            container.set(decode(op.key, decodeOpts), decode(op.value, decodeOpts));
-            return root;
-        }
-        case "mapDelete": {
-            const decodeOpts = makeDecodeOpts(registry);
-            const { container } = resolveTarget(root, registry, op.target);
-            container.delete(decode(op.key, decodeOpts));
-            return root;
-        }
-        case "mapClear": {
-            const { container } = resolveTarget(root, registry, op.target);
-            container.clear();
-            return root;
-        }
-        case "setAdd": {
-            const decodeOpts = makeDecodeOpts(registry);
-            const { container } = resolveTarget(root, registry, op.target);
-            container.add(decode(op.value, decodeOpts));
-            return root;
-        }
-        case "setDelete": {
-            const decodeOpts = makeDecodeOpts(registry);
-            const { container } = resolveTarget(root, registry, op.target);
-            container.delete(decode(op.value, decodeOpts));
-            return root;
-        }
-        case "setClear": {
-            const { container } = resolveTarget(root, registry, op.target);
-            container.clear();
-            return root;
-        }
-    }
-}
-function applyOps(root, ops, registry) {
-    for (const op of ops)
-        root = applyOp(root, op, registry);
-    return root;
-}
-/* ── Snapshot reconstruction ──────────────────────────────────────── */
-function applySnapshot(op, registry) {
-    // Tree snapshot (v0.1): single encoded value at the root.
-    if (op.value !== undefined) {
-        return decode(op.value, makeDecodeOpts(registry));
-    }
-    // Graph snapshot (v0.2): two-pass reconstruction.
-    if (op.objects && op.rootIds) {
-        // Phase 1: clear the registry and create empty placeholders for
-        // each tracked object. The placeholder type matches what the
-        // encoded form is — array, Map, Set, or plain object.
-        registry.clear();
-        const placeholders = new Map();
-        for (const { id, encoded } of op.objects) {
-            const placeholder = makePlaceholder(encoded);
-            placeholders.set(id, placeholder);
-            registry.adopt(placeholder, id);
-        }
-        // Phase 2: decode each entry's contents (refs resolve through the
-        // registry, returning the placeholders) and copy into the placeholder.
-        const decodeOpts = makeDecodeOpts(registry);
-        for (const { id, encoded } of op.objects) {
-            const placeholder = placeholders.get(id);
-            const decoded = decode(encoded, decodeOpts);
-            hydratePlaceholder(placeholder, decoded);
-        }
-        // Return the first root id's object as the new root. If there are
-        // multiple roots, callers should consult `registry.getObjectById`
-        // for each root id.
-        if (op.rootIds.length === 0)
-            return null;
-        return placeholders.get(op.rootIds[0]) ?? null;
-    }
-    throw new Error("remjs: snapshot op has neither `value` nor `objects`+`rootIds`");
-}
-/** Build an empty placeholder of the right type for an encoded value. */
-function makePlaceholder(encoded) {
-    if (Array.isArray(encoded))
-        return [];
-    if (encoded && typeof encoded === "object" && TAG in encoded) {
-        const tag = encoded[TAG];
-        if (tag === "map")
-            return new Map();
-        if (tag === "set")
-            return new Set();
-    }
-    return {};
-}
-/** Copy decoded contents into an existing placeholder of the right type. */
-function hydratePlaceholder(placeholder, decoded) {
-    if (Array.isArray(placeholder) && Array.isArray(decoded)) {
-        placeholder.length = 0;
-        for (const item of decoded)
-            placeholder.push(item);
-        return;
-    }
-    if (placeholder instanceof Map && decoded instanceof Map) {
-        placeholder.clear();
-        for (const [k, v] of decoded)
-            placeholder.set(k, v);
-        return;
-    }
-    if (placeholder instanceof Set && decoded instanceof Set) {
-        placeholder.clear();
-        for (const v of decoded)
-            placeholder.add(v);
-        return;
-    }
-    if (typeof decoded === "object" && decoded !== null && !Array.isArray(decoded)) {
-        // Plain object — copy own keys
-        for (const k of Object.keys(decoded)) {
-            placeholder[k] = decoded[k];
-        }
-        return;
-    }
-    throw new Error("remjs: placeholder type mismatch during snapshot hydration");
-}
-/* ── Decode options ───────────────────────────────────────────────── */
-function makeDecodeOpts(registry) {
-    return {
-        resolveRef: (id) => registry.getObjectById(id),
-        adoptObject: (id, obj) => registry.adopt(obj, id),
-    };
-}
-function createReceiver(initial) {
-    let root = initial ?? {};
-    const registry = createObjectRegistry();
-    return {
-        get state() {
-            return root;
-        },
-        get registry() {
-            return registry;
-        },
-        apply(ops) {
-            root = applyOps(root, ops, registry);
-        },
-    };
-}
-/* ── Helper for callers that don't have a registry ────────────────── */
-/** Backward-compat shim: applyOps with an implicit fresh registry.
- *  The original v0.1 signature was `applyOps(root, ops)` (no registry).
- *  Tests and demos that use the legacy alias still expect the two-arg
- *  form to work. This wrapper provides it. */
-function applyOpsLegacy(root, ops) {
-    return applyOps(root, ops, createObjectRegistry());
-}
-/** Same backward-compat shim for single-op application. */
-function applyOpLegacy(root, op) {
-    return applyOp(root, op, createObjectRegistry());
-}
-
-/* ---------- observer.js ---------- */
-/**
- * createObserver — the v0.2 source-side primitive.
- *
- * The JS-state analog of remdom's `createObserver`. Returns a handle that
- * owns:
- *   - an `ObjectRegistry` for stable id assignment to tracked objects
- *   - a batched op stream that flushes via the configured `batchMode`
- *   - lifecycle methods (`snapshot`, `flush`, `destroy`)
- *   - the `track(obj)` method which adds an object to be observed and
- *     returns a Proxy-wrapped version
- *
- * Multiple `track()` calls all feed the same op stream and share the
- * same registry, so cross-references between tracked objects are
- * preserved (an object referenced from another tracked object is itself
- * tracked, with the same id everywhere it appears).
- *
- * Unlike remdom's `createObserver` there's no `root` parameter — JS
- * state has no canonical root, and forcing one would be inventing
- * structure where none exists. The user adds tracked roots explicitly
- * via `track()`. Future v0.3+ adds higher-level capture mechanisms
- * (`observeGlobal()`, `hookFramework("react")`, etc.) on the same
- * observer object so explicit tracking and broader capture coexist.
- */
-function createObserver(options = {}) {
-    const { onOps, registry = createObjectRegistry(), batchMode = "microtask", resyncInterval = 0, } = options;
+function createRecorder(options) {
+    const { onOps, batchMode = &quot;microtask&quot;, events: enableEvents = true, timers: enableTimers = true, network: enableNetwork = true, random: enableRandom = true, clock: enableClock = true, storage: enableStorage = true, } = options;
     let pending = [];
     let scheduled = false;
-    let destroyed = false;
-    let opsSinceResync = 0;
-    /** Set of explicitly tracked root ids — every `track(obj)` adds one.
-     *  Snapshot uses this to know which ids are "top-level" vs reachable. */
-    const rootIds = new Set();
-    const flush = () => {
+    let running = false;
+    const uninstallers = [];
+    const flush = () =&gt; {
         scheduled = false;
-        if (pending.length === 0 || destroyed)
+        if (pending.length === 0)
             return;
-        const toSend = pending;
+        const batch = pending;
         pending = [];
-        opsSinceResync += toSend.length;
-        // Periodic resync: replace accumulated ops with a fresh snapshot.
-        if (resyncInterval > 0 && opsSinceResync >= resyncInterval) {
-            opsSinceResync = 0;
-            onOps?.([buildSnapshot()]);
-            return;
-        }
-        onOps?.(toSend);
+        onOps(batch);
     };
-    const schedule = () => {
-        if (scheduled || destroyed)
+    const schedule = () =&gt; {
+        if (scheduled || !running)
             return;
         scheduled = true;
-        if (batchMode === "sync") {
+        if (batchMode === &quot;sync&quot;) {
             flush();
         }
-        else if (batchMode === "microtask") {
-            queueMicrotask(flush);
-        }
-        else if (batchMode === "raf" && typeof requestAnimationFrame === "function") {
+        else if (batchMode === &quot;raf&quot; &amp;&amp; typeof requestAnimationFrame === &quot;function&quot;) {
             requestAnimationFrame(flush);
-        }
-        else if (typeof batchMode === "number") {
-            setTimeout(flush, batchMode);
         }
         else {
             queueMicrotask(flush);
         }
     };
-    const emit = (op) => {
-        if (destroyed)
+    const emit = (op) =&gt; {
+        if (!running)
             return;
         pending.push(op);
         schedule();
     };
-    const track = (obj) => {
-        // Eagerly walk the graph and assign ids to every reachable object,
-        // so subsequent ops referring to nested objects can encode them as
-        // refs. This matches remdom's `walkAndAssign` at observe time.
-        registry.walkAndAssign(obj);
-        rootIds.add(registry.assignId(obj));
-        return wrap(obj, registry, emit);
-    };
-    const buildSnapshot = () => {
-        // Walk every tracked object via the registry's entries iterator.
-        // For each, encode its contents (top-level, so nested refs become
-        // ref tags) into a graph entry.
-        const objects = [];
-        const refOf = (o) => registry.getIdOf(o);
-        for (const [id, obj] of registry.entries()) {
-            objects.push({ id, encoded: encodeContents(obj, { refOf }) });
+    function start() {
+        if (running)
+            return;
+        running = true;
+        if (enableClock) {
+            uninstallers.push(installClockPatch(emit));
         }
+        if (enableRandom) {
+            uninstallers.push(installRandomPatch(emit));
+        }
+        if (enableTimers) {
+            const { uninstall } = installTimerPatch(emit);
+            uninstallers.push(uninstall);
+        }
+        if (enableNetwork) {
+            uninstallers.push(installNetworkPatch(emit));
+        }
+        if (enableStorage) {
+            uninstallers.push(installStoragePatch(emit));
+        }
+        // Event patch requires DOM — install only if EventTarget exists
+        if (enableEvents &amp;&amp; typeof EventTarget !== &quot;undefined&quot;) {
+            import(&quot;./patches/events.js&quot;).then(({ installEventPatch }) =&gt; {
+                if (running) {
+                    uninstallers.push(installEventPatch(emit));
+                }
+            });
+        }
+    }
+    function stop() {
+        if (!running)
+            return;
+        running = false;
+        flush();
+        for (const fn of uninstallers)
+            fn();
+        uninstallers.length = 0;
+    }
+    function snapshot() {
         return {
-            type: "snapshot",
-            objects,
-            rootIds: Array.from(rootIds),
+            type: &quot;snapshot&quot;,
+            html: typeof document !== &quot;undefined&quot; ? document.documentElement.outerHTML : &quot;&quot;,
+            url: typeof location !== &quot;undefined&quot; ? location.href : &quot;&quot;,
+            timestamp: Date.now(),
+            pendingTimers: [],
+            pendingNetwork: [],
         };
-    };
-    return {
-        track,
-        snapshot: buildSnapshot,
-        flush,
-        destroy: () => {
-            destroyed = true;
-        },
-        get registry() {
-            return registry;
-        },
-    };
+    }
+    function destroy() {
+        stop();
+        pending = [];
+    }
+    return { start, stop, snapshot, destroy };
 }
 
-/* ---------- stream.js ---------- */
+/* ---------- player.js ---------- */
 /**
- * createStateStream — v0.1 compatibility shim.
+ * Player — replays event loop ops on a follower runtime.
  *
- * Wraps a single state object via the v0.2 `createObserver` primitive
- * and exposes the v0.1 return shape (`state`, `snapshot`, `flush`,
- * `dispose`). Existing demos and consumers that pass a single root
- * object continue to work without changes — though the emitted ops
- * are now in the v0.2 ref-addressed shape, not the v0.1 path-addressed
- * shape. v0.1 op-shape consumers (i.e. tests asserting on the wire
- * format directly) need to update; v0.1 *behavior* consumers (i.e.
- * apps that just call `state.foo = bar` and ship ops over a transport)
- * are unaffected.
- *
- * For new code prefer `createObserver()` directly — it supports
- * multiple tracked roots, returns the registry, and admits the future
- * `observeGlobal()` / `hookFramework()` capture mechanisms.
+ * Monkey-patches globals on the follower so that Math.random(),
+ * Date.now(), fetch(), etc. return recorded values. DOM events
+ * are dispatched to the correct elements via CSS selector paths.
  */
-function createStateStream(initial, options = {}) {
-    const observer = createObserver({
-        onOps: options.onOps,
-        batchMode: options.batch,
-    });
-    const state = observer.track(initial);
-    return {
-        state,
-        snapshot: () => observer.snapshot(),
-        flush: () => observer.flush(),
-        dispose: () => observer.destroy(),
-    };
+function createPlayer(options = {}) {
+    const { events: enableEvents = true, timers: enableTimers = true, network: enableNetwork = true, random: enableRandom = true, clock: enableClock = true, storage: enableStorage = true, } = options;
+    // Queues for deterministic value replay
+    const randomQueue = [];
+    const clockQueue = [];
+    const fetchQueue = new Map();
+    // Save originals for cleanup
+    const origRandom = Math.random;
+    const origDateNow = Date.now;
+    const origFetch = globalThis.fetch;
+    let installed = false;
+    function install() {
+        if (installed)
+            return;
+        installed = true;
+        if (enableRandom) {
+            Math.random = function () {
+                if (randomQueue.length &gt; 0)
+                    return randomQueue.shift();
+                return origRandom();
+            };
+        }
+        if (enableClock) {
+            Date.now = function () {
+                if (clockQueue.length &gt; 0)
+                    return clockQueue.shift();
+                return origDateNow.call(Date);
+            };
+        }
+        if (enableNetwork) {
+            globalThis.fetch = async function (input, init) {
+                // Check if we have a queued response for this request
+                for (const [seq, entry] of fetchQueue) {
+                    const url = typeof input === &quot;string&quot; ? input : input instanceof URL ? input.href : input.url;
+                    if (entry.op.url === url) {
+                        fetchQueue.delete(seq);
+                        return new Response(entry.op.body, {
+                            status: entry.op.status ?? 200,
+                            headers: entry.op.headers ?? {},
+                        });
+                    }
+                }
+                // No recorded response — fall through to real fetch
+                return origFetch.call(globalThis, input, init);
+            };
+        }
+    }
+    function applyEvent(op) {
+        if (!enableEvents)
+            return;
+        if (typeof document === &quot;undefined&quot;)
+            return;
+        const target = document.querySelector(op.targetPath);
+        if (!target)
+            return;
+        let event;
+        const d = op.detail;
+        if (op.eventType.startsWith(&quot;mouse&quot;) || op.eventType === &quot;click&quot; || op.eventType === &quot;dblclick&quot;) {
+            event = new MouseEvent(op.eventType, {
+                bubbles: true,
+                cancelable: true,
+                clientX: d.clientX,
+                clientY: d.clientY,
+                button: d.button,
+            });
+        }
+        else if (op.eventType.startsWith(&quot;key&quot;)) {
+            event = new KeyboardEvent(op.eventType, {
+                bubbles: true,
+                cancelable: true,
+                key: d.key,
+                code: d.code,
+                altKey: d.altKey,
+                ctrlKey: d.ctrlKey,
+                shiftKey: d.shiftKey,
+                metaKey: d.metaKey,
+            });
+        }
+        else if (op.eventType === &quot;input&quot; || op.eventType === &quot;change&quot;) {
+            if (&quot;value&quot; in d &amp;&amp; &quot;value&quot; in target) {
+                target.value = d.value;
+            }
+            event = new Event(op.eventType, { bubbles: true, cancelable: true });
+        }
+        else {
+            event = new Event(op.eventType, { bubbles: true, cancelable: true });
+        }
+        target.dispatchEvent(event);
+    }
+    function applyTimer(_op) {
+        // Timer replay: the follower's code registered the same timers
+        // in the same order. When a TimerOp arrives, we just let the
+        // follower's native timer fire naturally — the seq numbers
+        // ensure ordering consistency. For more precise control, the
+        // timer patch on the follower side would intercept and fire
+        // callbacks by seq. This is deferred to a future refinement.
+    }
+    function applyNetwork(op) {
+        if (!enableNetwork)
+            return;
+        fetchQueue.set(op.seq, {
+            resolve: () =&gt; { },
+            op,
+        });
+    }
+    function applyRandom(op) {
+        if (!enableRandom)
+            return;
+        randomQueue.push(...op.values);
+    }
+    function applyClock(op) {
+        if (!enableClock)
+            return;
+        clockQueue.push(op.value);
+    }
+    function applyStorage(op) {
+        if (!enableStorage)
+            return;
+        const storage = op.kind === &quot;local&quot;
+            ? (typeof localStorage !== &quot;undefined&quot; ? localStorage : null)
+            : (typeof sessionStorage !== &quot;undefined&quot; ? sessionStorage : null);
+        if (!storage)
+            return;
+        if (op.action === &quot;set&quot; &amp;&amp; op.value !== null) {
+            storage.setItem(op.key, op.value);
+        }
+        else if (op.action === &quot;remove&quot;) {
+            storage.removeItem(op.key);
+        }
+        // &quot;get&quot; ops are informational — no action needed on replay
+    }
+    function applySnapshot(op) {
+        if (typeof document === &quot;undefined&quot;)
+            return;
+        document.documentElement.innerHTML = op.html;
+    }
+    function apply(ops) {
+        install();
+        for (const op of ops) {
+            switch (op.type) {
+                case &quot;event&quot;:
+                    applyEvent(op);
+                    break;
+                case &quot;timer&quot;:
+                    applyTimer(op);
+                    break;
+                case &quot;network&quot;:
+                    applyNetwork(op);
+                    break;
+                case &quot;random&quot;:
+                    applyRandom(op);
+                    break;
+                case &quot;clock&quot;:
+                    applyClock(op);
+                    break;
+                case &quot;storage&quot;:
+                    applyStorage(op);
+                    break;
+                case &quot;snapshot&quot;:
+                    applySnapshot(op);
+                    break;
+                case &quot;navigation&quot;: break; // deferred
+            }
+        }
+    }
+    function destroy() {
+        if (!installed)
+            return;
+        installed = false;
+        Math.random = origRandom;
+        Date.now = origDateNow;
+        globalThis.fetch = origFetch;
+        randomQueue.length = 0;
+        clockQueue.length = 0;
+        fetchQueue.clear();
+    }
+    return { apply, destroy };
 }
 
 
 window.remjs = {
-  // v0.2 primary API
-  createObserver,
-  createObjectRegistry,
-  // Receiver
-  applyOp,
-  applyOps,
-  createReceiver,
-  // Codec
-  encode,
-  encodeContents,
-  decode,
-  // v0.1 compatibility shim
-  createStateStream,
-  // Op helpers
-  normalizeLegacyOp,
-  TAG,
+  createRecorder,
+  createPlayer,
+  jsonCodec,
 };
 
-})();
-    </script>
+})();&lt;/script&gt;
+  &lt;script&gt;
+(function() {
+  var isFollower = (window.location.hash === &quot;#follower&quot;) || window.__remjs_follower;
+  var { createRecorder, createPlayer, jsonCodec } = window.remjs;
 
-    <!-- ───────────── demo code ───────────── -->
-    <script>
-(function () {
-  const { createStateStream, createReceiver } = window.remjs;
+  var canvas = document.getElementById(&quot;canvas&quot;);
+  var ctx = canvas.getContext(&quot;2d&quot;);
 
-  /* court geometry --------------------------------------------------- */
-
-  const W = 560;
-  const H = 420;
-  const LAUNCHER = { x: W / 2, y: H - 34 };
-  const TARGET = { x: W / 2, y: 70 };
-  const ZONES = [
-    { r: 22, points: 5, color: "#f0c040" },
-    { r: 46, points: 3, color: "#6fa8dc" },
-    { r: 74, points: 1, color: "#3e5978" },
+  /* ── geometry ─────────────────────────────────────────── */
+  var W = 560, H = 420;
+  var LAUNCHER = { x: W / 2, y: H - 34 };
+  var TARGET = { x: W / 2, y: 70 };
+  var ZONES = [
+    { r: 22, pts: 5, color: &quot;#f0c040&quot; },
+    { r: 46, pts: 3, color: &quot;#6fa8dc&quot; },
+    { r: 74, pts: 1, color: &quot;#3e5978&quot; },
   ];
-  const PUCK_R = 14;
-  const FRICTION = 0.985;
-  const REST_SPEED = 0.2;
-  const RESTITUTION = 0.9;
+  var PUCK_R = 14, FRICTION = 0.985, REST = 0.2, BOUNCE = 0.9;
 
-  const sourceCanvas = document.getElementById("source");
-  const mirrorCanvas = document.getElementById("mirror");
-  const sctx = sourceCanvas.getContext("2d");
-  const mctx = mirrorCanvas.getContext("2d");
+  /* ── state ────────────────────────────────────────────── */
+  var pucks = [];
+  var nextId = 1;
+  var score = 0;
+  var drag = null;
 
-  const $speed = document.getElementById("speed");
-  const $speedVal = document.getElementById("speedVal");
-  const $pause = document.getElementById("pause");
-  const $stepOne = document.getElementById("stepOne");
-  const $readoutCk = document.getElementById("readout");
-  const $readoutWrap = document.getElementById("readoutWrap");
-  const $sourceJson = document.getElementById("sourceJson");
-  const $mirrorJson = document.getElementById("mirrorJson");
-  const $copySource = document.getElementById("copySource");
-  const $copyMirror = document.getElementById("copyMirror");
-  const $delay = document.getElementById("delay");
-  const $trails = document.getElementById("trails");
-  const $reset = document.getElementById("reset");
-  const $opsPs = document.getElementById("opsPs");
-  const $batchesPs = document.getElementById("batchesPs");
-  const $bytesPs = document.getElementById("bytesPs");
-  const $bytesPerOp = document.getElementById("bytesPerOp");
-  const $frameMs = document.getElementById("frameMs");
-  const $integrity = document.getElementById("integrity");
-  const $pulseSource = document.getElementById("pulseSource");
-  const $pulseMirror = document.getElementById("pulseMirror");
-
-  /* game state ------------------------------------------------------- */
-
-  function makeInitialGame() {
-    return {
-      tick: 0,
-      nextId: 1,
-      score: 0,
-      pucks: [],   // { id, x, y, vx, vy, color, stopped, points }
-      shots: [],   // { id, puckId, tick, aimX, aimY, result }
-    };
+  function canvasXY(ev) {
+    var r = canvas.getBoundingClientRect();
+    return { x: (ev.clientX - r.left) / r.width * W, y: (ev.clientY - r.top) / r.height * H };
   }
 
-  /* trails (local render state) -------------------------------------- */
-
-  const TRAIL_LEN = 28;
-  function makeTrailMap() { return new Map(); }
-  const sourceTrails = makeTrailMap();
-  const mirrorTrails = makeTrailMap();
-
-  function updateTrails(trails, state) {
-    const alive = new Set();
-    const pucks = state.pucks;
-    for (let i = 0; i < pucks.length; i++) {
-      const p = pucks[i];
-      alive.add(p.id);
-      let trail = trails.get(p.id);
-      if (!trail) {
-        trail = { color: p.color, points: [] };
-        trails.set(p.id, trail);
-      }
-      // Only record trail points while the puck is actually moving so
-      // stopped pucks stop leaving breadcrumbs.
-      if (!p.stopped) {
-        trail.points.push(p.x, p.y);
-        if (trail.points.length > TRAIL_LEN * 2) {
-          trail.points.splice(0, trail.points.length - TRAIL_LEN * 2);
-        }
-      }
-    }
-    for (const id of trails.keys()) {
-      if (!alive.has(id)) trails.delete(id);
-    }
-  }
-
-  /* streaming -------------------------------------------------------- */
-
-  let source = null;
-  let stream = null;
-  let proxy = null;
-  let receiver = null;
-
-  let opsThisSec = 0;
-  let batchesThisSec = 0;
-  let bytesThisSec = 0;
-  let delayMs = 0;
-  let speed = 1;
-  let stepAccumulator = 0;
-  let paused = false;
-  let readoutOn = false;
-  let readoutDirty = true;
-
-  function flashPulse(el) {
-    el.classList.add("active");
-    setTimeout(() => el.classList.remove("active"), 80);
-  }
-
-  function pipe(ops) {
-    opsThisSec += ops.length;
-    batchesThisSec++;
-    flashPulse($pulseSource);
-    const wire = JSON.stringify(ops);
-    bytesThisSec += wire.length;
-    const deliver = () => {
-      receiver.apply(JSON.parse(wire));
-      flashPulse($pulseMirror);
-    };
-    if (delayMs > 0) setTimeout(deliver, delayMs);
-    else deliver();
-  }
-
-  function wireUp() {
-    if (stream) stream.dispose();
-    source = makeInitialGame();
-    stream = createStateStream(source, { onOps: pipe, batch: "microtask" });
-    proxy = stream.state;
-    // Use createReceiver with the snapshot op to bootstrap the registry
-    receiver = createReceiver();
-    receiver.apply([stream.snapshot()]);
-  }
-
-  /* game actions ----------------------------------------------------- */
-
+  /* ── game logic ───────────────────────────────────────── */
   function launchPuck(aimX, aimY) {
-    // Vector from launcher to aim point.
-    let dx = aimX - LAUNCHER.x;
-    let dy = aimY - LAUNCHER.y;
-    // Clamp power based on drag length.
-    const dragLen = Math.hypot(dx, dy);
-    const MAX_POWER = 14;
-    const power = Math.min(MAX_POWER, dragLen / 14);
-    if (power < 0.5) return; // too weak to matter
-    const nx = dx / (dragLen || 1);
-    const ny = dy / (dragLen || 1);
-    const vx = nx * power;
-    const vy = ny * power;
-
-    const puckId = proxy.nextId;
-    proxy.nextId++;
-    proxy.pucks.push({
-      id: puckId,
-      x: LAUNCHER.x,
-      y: LAUNCHER.y,
-      vx,
-      vy,
-      color: "hsl(" + ((puckId * 53) % 360) + ", 80%, 60%)",
-      stopped: false,
-      points: 0,
+    var dx = aimX - LAUNCHER.x, dy = aimY - LAUNCHER.y;
+    var len = Math.hypot(dx, dy);
+    var power = Math.min(14, len / 14);
+    if (power &lt; 0.5) return;
+    var nx = dx / (len || 1), ny = dy / (len || 1);
+    var id = nextId++;
+    pucks.push({
+      id: id, x: LAUNCHER.x, y: LAUNCHER.y,
+      vx: nx * power, vy: ny * power,
+      color: &quot;hsl(&quot; + ((id * 53) % 360) + &quot;, 80%, 60%)&quot;,
+      stopped: false, points: 0,
     });
-    proxy.shots.push({
-      id: proxy.shots.length + 1,
-      puckId,
-      tick: proxy.tick,
-      aimX: Math.round(aimX),
-      aimY: Math.round(aimY),
-      result: "in_flight",
-    });
-    readoutDirty = true;
-  }
-
-  function distanceToTarget(x, y) {
-    const dx = x - TARGET.x;
-    const dy = y - TARGET.y;
-    return Math.hypot(dx, dy);
   }
 
   function scorePuck(x, y) {
-    const d = distanceToTarget(x, y);
-    for (const z of ZONES) {
-      if (d <= z.r) return z.points;
-    }
+    var d = Math.hypot(x - TARGET.x, y - TARGET.y);
+    for (var z of ZONES) if (d &lt;= z.r) return z.pts;
     return 0;
   }
 
-  /* physics ---------------------------------------------------------- */
-
-  function recomputeScore() {
-    let total = 0;
-    const pucks = proxy.pucks;
-    for (let i = 0; i < pucks.length; i++) {
-      if (pucks[i].stopped) total += pucks[i].points;
-    }
-    if (total !== proxy.score) proxy.score = total;
-  }
-
-  function updateShotLogForPuck(puckId, result) {
-    // Find the most recent shot entry for this puck and update its result.
-    const shots = proxy.shots;
-    for (let j = shots.length - 1; j >= 0; j--) {
-      if (shots[j].puckId === puckId) {
-        if (shots[j].result !== result) shots[j].result = result;
-        return;
-      }
-    }
-  }
-
-  /** Resolve puck-on-puck collisions by positional correction + impulse.
-   *  Equal mass, partially elastic. Stopped pucks get woken up if hit. */
-  function resolveCollisions() {
-    const pucks = proxy.pucks;
-    const n = pucks.length;
-    for (let i = 0; i < n; i++) {
-      const a = pucks[i];
-      for (let j = i + 1; j < n; j++) {
-        const b = pucks[j];
-        const dx = b.x - a.x;
-        const dy = b.y - a.y;
-        const distSq = dx * dx + dy * dy;
-        const minDist = PUCK_R * 2;
-        if (distSq >= minDist * minDist || distSq === 0) continue;
-
-        const dist = Math.sqrt(distSq);
-        const nx = dx / dist;
-        const ny = dy / dist;
-
-        // Push each puck out so they're just touching.
-        const overlap = (minDist - dist) / 2;
-        a.x -= nx * overlap;
-        a.y -= ny * overlap;
-        b.x += nx * overlap;
-        b.y += ny * overlap;
-
-        // Relative velocity along the collision normal.
-        const rvn = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
-        // If already separating, the positional correction is enough.
-        if (rvn > 0) continue;
-
-        // Equal-mass elastic impulse with restitution.
-        const impulse = -(1 + RESTITUTION) * rvn / 2;
-        const ix = impulse * nx;
-        const iy = impulse * ny;
-        a.vx -= ix;
-        a.vy -= iy;
-        b.vx += ix;
-        b.vy += iy;
-
-        // Any stopped puck that got hit is now in motion again and
-        // loses its previous scoring contribution until it settles.
-        if (a.stopped) {
-          a.stopped = false;
-          if (a.points !== 0) a.points = 0;
-          updateShotLogForPuck(a.id, "bumped");
-        }
-        if (b.stopped) {
-          b.stopped = false;
-          if (b.points !== 0) b.points = 0;
-          updateShotLogForPuck(b.id, "bumped");
-        }
-      }
-    }
-  }
-
   function step() {
-    proxy.tick++;
-    const pucks = proxy.pucks;
-
-    // 1. Integrate motion for moving pucks.
-    for (let i = 0; i < pucks.length; i++) {
-      const p = pucks[i];
+    for (var p of pucks) {
       if (p.stopped) continue;
-
-      let x = p.x, y = p.y, vx = p.vx, vy = p.vy;
-      x += vx;
-      y += vy;
-      vx *= FRICTION;
-      vy *= FRICTION;
-
-      if (x < PUCK_R) { x = PUCK_R; vx = -vx * 0.85; }
-      else if (x > W - PUCK_R) { x = W - PUCK_R; vx = -vx * 0.85; }
-      if (y < PUCK_R) { y = PUCK_R; vy = -vy * 0.85; }
-      else if (y > H - PUCK_R) { y = H - PUCK_R; vy = -vy * 0.85; }
-
-      p.x = x;
-      p.y = y;
-      p.vx = vx;
-      p.vy = vy;
+      p.x += p.vx; p.y += p.vy;
+      p.vx *= FRICTION; p.vy *= FRICTION;
+      if (p.x &lt; PUCK_R) { p.x = PUCK_R; p.vx = -p.vx * 0.85; }
+      else if (p.x &gt; W - PUCK_R) { p.x = W - PUCK_R; p.vx = -p.vx * 0.85; }
+      if (p.y &lt; PUCK_R) { p.y = PUCK_R; p.vy = -p.vy * 0.85; }
+      else if (p.y &gt; H - PUCK_R) { p.y = H - PUCK_R; p.vy = -p.vy * 0.85; }
     }
-
-    // 2. Resolve puck-on-puck collisions (may wake stopped pucks).
-    resolveCollisions();
-
-    // 3. Detect newly rested pucks, score them, log the result.
-    for (let i = 0; i < pucks.length; i++) {
-      const p = pucks[i];
-      if (p.stopped) continue;
-      if (Math.hypot(p.vx, p.vy) < REST_SPEED) {
-        p.stopped = true;
-        p.vx = 0;
-        p.vy = 0;
-        const pts = scorePuck(p.x, p.y);
-        p.points = pts;
-        updateShotLogForPuck(p.id, pts > 0 ? "scored " + pts : "miss");
+    // collisions
+    for (var i = 0; i &lt; pucks.length; i++) {
+      var a = pucks[i];
+      for (var j = i + 1; j &lt; pucks.length; j++) {
+        var b = pucks[j];
+        var dx = b.x - a.x, dy = b.y - a.y;
+        var ds = dx * dx + dy * dy, md = PUCK_R * 2;
+        if (ds &gt;= md * md || ds === 0) continue;
+        var d = Math.sqrt(ds);
+        var nx = dx / d, ny = dy / d, ov = (md - d) / 2;
+        a.x -= nx * ov; a.y -= ny * ov;
+        b.x += nx * ov; b.y += ny * ov;
+        var rvn = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
+        if (rvn &gt; 0) continue;
+        var imp = -(1 + BOUNCE) * rvn / 2;
+        a.vx -= imp * nx; a.vy -= imp * ny;
+        b.vx += imp * nx; b.vy += imp * ny;
+        if (a.stopped) { a.stopped = false; a.points = 0; }
+        if (b.stopped) { b.stopped = false; b.points = 0; }
       }
     }
-
-    // 4. Recompute the total score from the currently-stopped pucks.
-    //    This handles both the just-rested case and the "woke up during
-    //    collision" case — a bumped puck drops out of the score
-    //    immediately and rejoins when it re-settles.
-    recomputeScore();
+    // scoring
+    score = 0;
+    for (var p of pucks) {
+      if (!p.stopped &amp;&amp; Math.hypot(p.vx, p.vy) &lt; REST) {
+        p.stopped = true; p.vx = 0; p.vy = 0;
+        p.points = scorePuck(p.x, p.y);
+      }
+      if (p.stopped) score += p.points;
+    }
   }
 
-  /* rendering -------------------------------------------------------- */
-
-  let showTrails = true;
-
-  function drawScene(ctx, state, trails, paneLabel, isSource) {
-    // Ensure canvas buffer matches its display size (fixes mobile
-    // where CSS width:100% resizes the element but the buffer stays
-    // at the HTML attribute value, causing a mismatch).
-    const canvas = ctx.canvas;
-    const displayW = canvas.clientWidth;
-    const displayH = canvas.clientHeight;
-    if (displayW > 0 && displayH > 0 && (canvas.width !== displayW || canvas.height !== displayH)) {
-      canvas.width = displayW;
-      canvas.height = displayH;
+  /* ── draw ──────────────────────────────────────────────── */
+  function draw() {
+    // Sync canvas buffer to display size
+    var rect = canvas.getBoundingClientRect();
+    if (canvas.width !== W || canvas.height !== H) {
+      canvas.width = W; canvas.height = H;
     }
-    const cw = canvas.width;
-    const ch = canvas.height;
-    const scaleX = cw / W;
-    const scaleY = ch / H;
-    ctx.save();
-    ctx.scale(scaleX, scaleY);
 
-    // Background.
-    ctx.fillStyle = "#0e1116";
+    ctx.fillStyle = &quot;#06080d&quot;;
     ctx.fillRect(0, 0, W, H);
 
-    // Scoring zones — outer to inner so inner overdraws.
-    for (let i = ZONES.length - 1; i >= 0; i--) {
-      const z = ZONES[i];
-      ctx.fillStyle = z.color;
-      ctx.globalAlpha = 0.22;
-      ctx.beginPath();
-      ctx.arc(TARGET.x, TARGET.y, z.r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.globalAlpha = 1;
-      ctx.strokeStyle = z.color;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.arc(TARGET.x, TARGET.y, z.r, 0, Math.PI * 2);
-      ctx.stroke();
-      // Point value text on the right edge of the ring.
-      ctx.fillStyle = z.color;
-      ctx.font = "bold 11px system-ui, sans-serif";
-      ctx.textAlign = "left";
-      ctx.textBaseline = "middle";
-      ctx.fillText(String(z.points), TARGET.x + z.r + 4, TARGET.y);
+    // zones
+    for (var i = ZONES.length - 1; i &gt;= 0; i--) {
+      var z = ZONES[i];
+      ctx.fillStyle = z.color; ctx.globalAlpha = 0.18;
+      ctx.beginPath(); ctx.arc(TARGET.x, TARGET.y, z.r, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1; ctx.strokeStyle = z.color; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(TARGET.x, TARGET.y, z.r, 0, Math.PI * 2); ctx.stroke();
     }
 
-    // Launcher marker.
-    ctx.fillStyle = "#8a8f99";
+    // launcher
+    ctx.fillStyle = &quot;#8b949e&quot;;
     ctx.beginPath();
-    ctx.moveTo(LAUNCHER.x - 14, LAUNCHER.y + 10);
-    ctx.lineTo(LAUNCHER.x + 14, LAUNCHER.y + 10);
+    ctx.moveTo(LAUNCHER.x - 12, LAUNCHER.y + 10);
+    ctx.lineTo(LAUNCHER.x + 12, LAUNCHER.y + 10);
     ctx.lineTo(LAUNCHER.x, LAUNCHER.y - 10);
-    ctx.closePath();
-    ctx.fill();
+    ctx.closePath(); ctx.fill();
 
-    // Trails.
-    if (showTrails) {
-      for (const trail of trails.values()) {
-        const pts = trail.points;
-        if (pts.length < 4) continue;
-        ctx.strokeStyle = trail.color;
-        ctx.lineCap = "round";
-        for (let j = 0; j < pts.length - 2; j += 2) {
-          const t = (j / 2) / (pts.length / 2 - 1);
-          ctx.globalAlpha = Math.max(0.05, t * 0.55);
-          ctx.lineWidth = 1 + t * 2.5;
-          ctx.beginPath();
-          ctx.moveTo(pts[j], pts[j + 1]);
-          ctx.lineTo(pts[j + 2], pts[j + 3]);
-          ctx.stroke();
-        }
-      }
-      ctx.globalAlpha = 1;
-    }
-
-    // Pucks.
-    const pucks = state.pucks;
-    for (let i = 0; i < pucks.length; i++) {
-      const p = pucks[i];
+    // pucks
+    for (var p of pucks) {
       ctx.fillStyle = p.color;
-      ctx.globalAlpha = p.stopped ? 0.85 : 1;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, PUCK_R, 0, Math.PI * 2);
-      ctx.fill();
-      // Outline for stopped pucks so they read as "settled".
-      if (p.stopped) {
-        ctx.strokeStyle = "rgba(255,255,255,0.5)";
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, PUCK_R, 0, Math.PI * 2);
-        ctx.stroke();
-      }
+      ctx.globalAlpha = p.stopped ? 0.9 : 1;
+      ctx.beginPath(); ctx.arc(p.x, p.y, PUCK_R, 0, Math.PI * 2); ctx.fill();
       ctx.globalAlpha = 1;
-      ctx.fillStyle = "#fff";
-      ctx.font = "bold 12px system-ui, sans-serif";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
+      ctx.fillStyle = &quot;#fff&quot;; ctx.font = &quot;bold 11px sans-serif&quot;;
+      ctx.textAlign = &quot;center&quot;; ctx.textBaseline = &quot;middle&quot;;
       ctx.fillText(String(p.id), p.x, p.y);
     }
 
-    // Aim line (only on the source canvas while dragging).
-    if (isSource && drag) {
-      const dx = drag.x - LAUNCHER.x;
-      const dy = drag.y - LAUNCHER.y;
-      const len = Math.min(Math.hypot(dx, dy), 14 * 14);
-      const nx = dx / (Math.hypot(dx, dy) || 1);
-      const ny = dy / (Math.hypot(dx, dy) || 1);
-      ctx.strokeStyle = "#fff";
-      ctx.globalAlpha = 0.7;
-      ctx.lineWidth = 2;
-      ctx.setLineDash([4, 4]);
-      ctx.beginPath();
-      ctx.moveTo(LAUNCHER.x, LAUNCHER.y);
-      ctx.lineTo(LAUNCHER.x + nx * len, LAUNCHER.y + ny * len);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.globalAlpha = 1;
-    }
+    // score
+    ctx.fillStyle = &quot;#58a6ff&quot;; ctx.font = &quot;bold 20px sans-serif&quot;;
+    ctx.textAlign = &quot;right&quot;; ctx.textBaseline = &quot;top&quot;;
+    ctx.fillText(String(score), W - 8, 6);
+    ctx.font = &quot;10px sans-serif&quot;; ctx.fillStyle = &quot;#8b949e&quot;;
+    ctx.fillText(&quot;score&quot;, W - 8, 28);
 
-    // HUD: score + shot count + pane label + tick.
-    ctx.fillStyle = "#fff";
-    ctx.font = "bold 22px system-ui, sans-serif";
-    ctx.textAlign = "right";
-    ctx.textBaseline = "top";
-    ctx.fillText("score " + state.score, W - 10, 8);
-
-    ctx.fillStyle = "rgba(255,255,255,0.55)";
-    ctx.font = "11px ui-monospace, monospace";
-    ctx.textAlign = "left";
-    ctx.textBaseline = "top";
-    ctx.fillText(
-      paneLabel + "  tick=" + state.tick + "  pucks=" + pucks.length + "  shots=" + state.shots.length,
-      8,
-      8,
-    );
-
-    // Last few shots, as a small log in the bottom-left.
-    const shots = state.shots;
-    if (shots.length > 0) {
-      ctx.fillStyle = "rgba(255,255,255,0.7)";
-      ctx.font = "11px ui-monospace, monospace";
-      ctx.textAlign = "left";
-      ctx.textBaseline = "bottom";
-      const take = shots.slice(Math.max(0, shots.length - 4));
-      for (let i = 0; i < take.length; i++) {
-        const s = take[i];
-        const line = "#" + s.id + " puck " + s.puckId + " · " + s.result;
-        ctx.fillText(line, 10, H - 10 - (take.length - 1 - i) * 14);
-      }
-    }
-    ctx.restore();
+    // label
+    ctx.fillStyle = isFollower ? &quot;#bc8cff&quot; : &quot;#58a6ff&quot;;
+    ctx.font = &quot;10px sans-serif&quot;; ctx.textAlign = &quot;left&quot;; ctx.textBaseline = &quot;top&quot;;
+    ctx.fillText(isFollower ? &quot;follower — replayed inputs&quot; : &quot;source — real inputs&quot;, 8, 6);
   }
 
-  /* main loop -------------------------------------------------------- */
+  /* ── input ────────────────────────────────────────────── */
+  canvas.addEventListener(&quot;pointerdown&quot;, function(ev) { drag = canvasXY(ev); canvas.setPointerCapture(ev.pointerId); });
+  canvas.addEventListener(&quot;pointermove&quot;, function(ev) { if (drag) drag = canvasXY(ev); });
+  canvas.addEventListener(&quot;pointerup&quot;, function() { if (drag) { launchPuck(drag.x, drag.y); drag = null; } });
+  canvas.addEventListener(&quot;pointercancel&quot;, function() { drag = null; });
 
-  let lastFrameTs = performance.now();
-  let frameTimeAccum = 0;
-  let frameCount = 0;
-
-  function runPhysicsForFrame() {
-    if (paused) return;
-    stepAccumulator += speed;
-    let steps = 0;
-    while (stepAccumulator >= 1 && steps < 8) {
-      step();
-      stepAccumulator -= 1;
-      steps++;
-    }
-    if (steps > 0) {
-      stream.flush();
-      updateTrails(sourceTrails, source);
-      updateTrails(mirrorTrails, receiver.state);
-      readoutDirty = true;
-    }
-  }
-
-  function loop(ts) {
-    try {
-      lastFrameTs = ts;
-      const t0 = performance.now();
-      runPhysicsForFrame();
-      drawScene(sctx, source, sourceTrails, "source", true);
-      drawScene(mctx, receiver.state, mirrorTrails, "mirror", false);
-      const t1 = performance.now();
-      frameTimeAccum += t1 - t0;
-      frameCount++;
-      maybeUpdateReadout();
-    } catch(err) {
-      // Show the error visually so mobile users can see what's wrong
-      const $int = document.getElementById("integrity");
-      if ($int) {
-        $int.className = "integrity bad";
-        $int.textContent = "ERROR: " + err.message;
-      }
-      console.error("[remjs loop]", err);
-    }
+  /* ── main loop ────────────────────────────────────────── */
+  function loop() {
+    step();
+    draw();
     requestAnimationFrame(loop);
   }
 
-  function stepOnce() {
-    step();
-    stream.flush();
-    updateTrails(sourceTrails, source);
-    updateTrails(mirrorTrails, receiver.state);
-    readoutDirty = true;
-  }
-
-  /* state readout ---------------------------------------------------- */
-
-  let lastReadoutAt = 0;
-
-  function serializeState(state) {
-    // Deterministic key order — needed so two identical states produce
-    // byte-identical JSON for easy visual diffing.
-    return JSON.stringify(
-      state,
-      (key, value) => {
-        if (value && typeof value === "object" && !Array.isArray(value)) {
-          const ordered = {};
-          const keys = Object.keys(value).sort();
-          for (const k of keys) ordered[k] = value[k];
-          return ordered;
+  /* ── v0.3 event loop replication ──────────────────────── */
+  if (isFollower) {
+    // Follower: install player, receive ops via postMessage
+    var player = createPlayer();
+    window.addEventListener(&quot;message&quot;, function(ev) {
+      if (ev.data &amp;&amp; ev.data.type === &quot;remjs-ops&quot;) {
+        player.apply(ev.data.ops);
+      }
+    });
+    // Tell parent we're ready
+    if (window.parent !== window) {
+      window.parent.postMessage({ type: &quot;remjs-follower-ready&quot; }, &quot;*&quot;);
+    }
+  } else {
+    // Source: install recorder, send ops to follower iframe
+    var followerFrame = null;
+    var recorder = createRecorder({
+      onOps: function(ops) {
+        if (followerFrame) {
+          followerFrame.postMessage({ type: &quot;remjs-ops&quot;, ops: ops }, &quot;*&quot;);
         }
-        return value;
       },
-      2,
-    );
-  }
+      batchMode: &quot;sync&quot;,
+      events: true,
+      timers: true,
+      random: true,
+      clock: true,
+      network: false,
+      storage: false,
+    });
 
-  function maybeUpdateReadout() {
-    if (!readoutOn) return;
-    const now = performance.now();
-    // Throttle: update at ~6Hz while running, immediately when paused/dirty.
-    if (!paused && !readoutDirty) return;
-    if (!paused && now - lastReadoutAt < 160) return;
-    lastReadoutAt = now;
-    readoutDirty = false;
-
-    const srcText = serializeState(source);
-    const mirText = serializeState(receiver.state);
-    $sourceJson.textContent = srcText;
-    $mirrorJson.textContent = mirText;
-    $readoutWrap.classList.toggle("desync", srcText !== mirText);
-  }
-
-  /* stats / integrity ------------------------------------------------ */
-
-  function checkIntegrity() {
-    var mirror = receiver ? receiver.state : null;
-    if (!source || !mirror) return "initialising";
-    if (source.tick !== mirror.tick) {
-      return "tick drift (" + source.tick + " vs " + mirror.tick + ")";
-    }
-    if (source.score !== mirror.score) return "score drift";
-    if (source.pucks.length !== mirror.pucks.length) {
-      return "puck-count drift (" + source.pucks.length + " vs " + mirror.pucks.length + ")";
-    }
-    if (source.shots.length !== mirror.shots.length) {
-      return "shot-log drift (" + source.shots.length + " vs " + mirror.shots.length + ")";
-    }
-    let mismatches = 0;
-    let firstBad = -1;
-    for (let i = 0; i < source.pucks.length; i++) {
-      const a = source.pucks[i];
-      const b = mirror.pucks[i];
-      if (
-        a.id !== b.id ||
-        a.x !== b.x ||
-        a.y !== b.y ||
-        a.vx !== b.vx ||
-        a.vy !== b.vy ||
-        a.color !== b.color ||
-        a.stopped !== b.stopped ||
-        a.points !== b.points
-      ) {
-        if (firstBad === -1) firstBad = i;
-        mismatches++;
+    window.addEventListener(&quot;message&quot;, function(ev) {
+      if (ev.data &amp;&amp; ev.data.type === &quot;remjs-follower-ready&quot;) {
+        followerFrame = ev.source;
       }
-    }
-    if (mismatches > 0) {
-      return mismatches + " puck mismatches (first @ index " + firstBad + ")";
-    }
-    // Shot-log entries.
-    for (let i = 0; i < source.shots.length; i++) {
-      const a = source.shots[i];
-      const b = mirror.shots[i];
-      if (a.id !== b.id || a.puckId !== b.puckId || a.tick !== b.tick || a.result !== b.result) {
-        return "shot-log entry " + i + " drift";
-      }
-    }
-    return null;
+    });
+
+    recorder.start();
   }
 
-  setInterval(() => {
-    $opsPs.textContent = opsThisSec.toLocaleString();
-    $batchesPs.textContent = batchesThisSec.toLocaleString();
-    $bytesPs.innerHTML = (bytesThisSec / 1024).toFixed(1) + '<span class="unit">KB</span>';
-    $bytesPerOp.textContent = opsThisSec ? (bytesThisSec / opsThisSec).toFixed(1) : "—";
-    $frameMs.innerHTML = frameCount
-      ? (frameTimeAccum / frameCount).toFixed(2) + '<span class="unit">ms</span>'
-      : "—";
-
-    opsThisSec = 0;
-    batchesThisSec = 0;
-    bytesThisSec = 0;
-    frameTimeAccum = 0;
-    frameCount = 0;
-
-    if (delayMs === 0) {
-      const err = checkIntegrity();
-      if (err) {
-        $integrity.className = "integrity bad";
-        $integrity.textContent = "integrity: DESYNC — " + err;
-      } else {
-        $integrity.className = "integrity";
-        $integrity.textContent =
-          "integrity: OK · score=" + source.score +
-          " · " + source.pucks.length + " pucks · " +
-          source.shots.length + " shots verified @ tick " + source.tick;
-      }
-    } else {
-      $integrity.className = "integrity";
-      $integrity.textContent =
-        "integrity: delayed mode — mirror trails by " + delayMs + "ms (expected drift)";
-    }
-  }, 1000);
-
-  /* click & drag to fire --------------------------------------------- */
-
-  let drag = null; // { x, y } in canvas coords, while a drag is in progress
-
-  function canvasXY(ev) {
-    const rect = sourceCanvas.getBoundingClientRect();
-    return {
-      x: ((ev.clientX - rect.left) / rect.width) * W,
-      y: ((ev.clientY - rect.top) / rect.height) * H,
-    };
-  }
-
-  sourceCanvas.addEventListener("pointerdown", (ev) => {
-    drag = canvasXY(ev);
-    sourceCanvas.setPointerCapture(ev.pointerId);
-  });
-  sourceCanvas.addEventListener("pointermove", (ev) => {
-    if (drag) drag = canvasXY(ev);
-  });
-  sourceCanvas.addEventListener("pointerup", (ev) => {
-    if (!drag) return;
-    const { x, y } = drag;
-    drag = null;
-    launchPuck(x, y);
-  });
-  sourceCanvas.addEventListener("pointercancel", () => { drag = null; });
-
-  /* controls --------------------------------------------------------- */
-
-  function resetDemo() {
-    sourceTrails.clear();
-    mirrorTrails.clear();
-    drag = null;
-    wireUp();
-  }
-
-  function setSpeedFromSlider() {
-    // Slider is 0..200, map to 0..2 with a mild curve so the low end
-    // has more precision (tracking balls frame-by-frame is near 0).
-    const raw = Number($speed.value) / 100; // 0..2
-    speed = raw;
-    $speedVal.textContent = speed.toFixed(2) + "×";
-  }
-
-  function setPaused(p) {
-    paused = p;
-    $pause.textContent = paused ? "resume" : "pause";
-    if (paused) readoutDirty = true;
-  }
-
-  $speed.addEventListener("input", setSpeedFromSlider);
-  $pause.addEventListener("click", () => setPaused(!paused));
-  $stepOne.addEventListener("click", () => { if (!paused) setPaused(true); stepOnce(); });
-  $readoutCk.addEventListener("change", () => {
-    readoutOn = $readoutCk.checked;
-    $readoutWrap.classList.toggle("visible", readoutOn);
-    readoutDirty = true;
-  });
-  $copySource.addEventListener("click", () => {
-    navigator.clipboard?.writeText($sourceJson.textContent || "");
-  });
-  $copyMirror.addEventListener("click", () => {
-    navigator.clipboard?.writeText($mirrorJson.textContent || "");
-  });
-  $delay.addEventListener("change", () => { delayMs = $delay.checked ? 250 : 0; });
-  $trails.addEventListener("change", () => { showTrails = $trails.checked; });
-  $reset.addEventListener("click", () => { resetDemo(); });
-
-  // Keyboard: space = pause/resume, → = step one frame.
-  document.addEventListener("keydown", (e) => {
-    if (e.target && e.target.tagName === "INPUT") return;
-    if (e.code === "Space") {
-      e.preventDefault();
-      setPaused(!paused);
-    } else if (e.code === "ArrowRight") {
-      e.preventDefault();
-      if (!paused) setPaused(true);
-      stepOnce();
-    }
-  });
-
-  setSpeedFromSlider();
-
-  /* go --------------------------------------------------------------- */
-
-  wireUp();
   requestAnimationFrame(loop);
 })();
-    </script>
-  </body>
+  &lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;"></iframe>
+    </div>
+    <div class="panel mirror">
+      <div class="panel-label"><span class="side">follower — replayed inputs</span></div>
+      <iframe id="mirrorFrame" srcdoc="&lt;!doctype html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+&lt;head&gt;
+  &lt;meta charset=&quot;utf-8&quot; /&gt;
+  &lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot; /&gt;
+  &lt;title&gt;remjs — shuffleboard&lt;/title&gt;
+  &lt;style&gt;
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0d1117; overflow: hidden; }
+    canvas { display: block; width: 100%; height: 100vh; cursor: crosshair; }
+  &lt;/style&gt;
+&lt;script&gt;window.__remjs_follower=true;&lt;/script&gt;&lt;/head&gt;
+&lt;body&gt;
+  &lt;canvas id=&quot;canvas&quot;&gt;&lt;/canvas&gt;
+  &lt;script&gt;(function(){&quot;use strict&quot;;
+/* ---------- ops.js ---------- */
+/**
+ * remjs v0.3 — Event Loop Op Protocol
+ *
+ * Each op captures one event loop input: something that entered the JS
+ * runtime from the environment. The complete input surface is covered:
+ * DOM events, timer fires, network responses, non-deterministic values
+ * (random, clock), storage access, and navigation.
+ *
+ * All ops are plain JSON — no tagged values, no __remjs encoding.
+ * The event loop input surface is made of primitives, strings, and
+ * simple structures that survive JSON round-trip without special handling.
+ */
+
+/* ---------- codec.js ---------- */
+/**
+ * remjs v0.3 — Codec
+ *
+ * Ops are plain JSON — no special encoding needed. The codec is a thin
+ * abstraction so transport layers can swap in msgpack or protobuf later.
+ */
+const jsonCodec = {
+    encode(op) {
+        return JSON.stringify(op);
+    },
+    decode(data) {
+        return JSON.parse(data);
+    },
+    encodeBatch(ops) {
+        return JSON.stringify(ops);
+    },
+    decodeBatch(data) {
+        return JSON.parse(data);
+    },
+};
+
+/* ---------- patches/clock.js ---------- */
+/**
+ * Clock patch — intercepts Date.now() and performance.now().
+ *
+ * Records the actual value returned so replicas produce identical
+ * timestamps without needing synchronized clocks.
+ */
+function installClockPatch(emit) {
+    const origDateNow = Date.now;
+    const origPerfNow = typeof performance !== &quot;undefined&quot; ? performance.now.bind(performance) : null;
+    Date.now = function () {
+        const value = origDateNow.call(Date);
+        emit({ type: &quot;clock&quot;, source: &quot;dateNow&quot;, value });
+        return value;
+    };
+    if (origPerfNow &amp;&amp; typeof performance !== &quot;undefined&quot;) {
+        performance.now = function () {
+            const value = origPerfNow();
+            emit({ type: &quot;clock&quot;, source: &quot;performanceNow&quot;, value });
+            return value;
+        };
+    }
+    return function uninstall() {
+        Date.now = origDateNow;
+        if (origPerfNow &amp;&amp; typeof performance !== &quot;undefined&quot;) {
+            performance.now = origPerfNow;
+        }
+    };
+}
+
+/* ---------- patches/random.js ---------- */
+/**
+ * Random patch — intercepts Math.random() and crypto.getRandomValues().
+ *
+ * Records the actual values returned so replicas produce identical
+ * &quot;random&quot; sequences.
+ */
+function installRandomPatch(emit) {
+    const origRandom = Math.random;
+    const origCrypto = typeof globalThis.crypto !== &quot;undefined&quot; &amp;&amp;
+        typeof globalThis.crypto.getRandomValues === &quot;function&quot;
+        ? globalThis.crypto.getRandomValues.bind(globalThis.crypto)
+        : null;
+    Math.random = function () {
+        const value = origRandom();
+        emit({ type: &quot;random&quot;, source: &quot;math&quot;, values: [value] });
+        return value;
+    };
+    if (origCrypto &amp;&amp; typeof globalThis.crypto !== &quot;undefined&quot;) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        globalThis.crypto.getRandomValues = function (array) {
+            const result = origCrypto(array);
+            if (result &amp;&amp; ArrayBuffer.isView(result)) {
+                const values = Array.from(new Uint8Array(result.buffer, result.byteOffset, result.byteLength));
+                emit({ type: &quot;random&quot;, source: &quot;crypto&quot;, values });
+            }
+            return result;
+        };
+    }
+    return function uninstall() {
+        Math.random = origRandom;
+        if (origCrypto &amp;&amp; typeof globalThis.crypto !== &quot;undefined&quot;) {
+            globalThis.crypto.getRandomValues = origCrypto;
+        }
+    };
+}
+
+/* ---------- patches/timers.js ---------- */
+/**
+ * Timer patch — intercepts setTimeout, setInterval, clearTimeout, clearInterval.
+ *
+ * Assigns monotonic sequence numbers so leader and follower can match
+ * timer registrations without sharing raw browser timer IDs.
+ * Records a TimerOp when the callback actually fires.
+ *
+ * requestAnimationFrame is browser-only; skipped in this patch (added
+ * in the events patch or a browser-specific extension).
+ */
+function installTimerPatch(emit) {
+    const origSetTimeout = globalThis.setTimeout;
+    const origSetInterval = globalThis.setInterval;
+    const origClearTimeout = globalThis.clearTimeout;
+    const origClearInterval = globalThis.clearInterval;
+    const patchState = {
+        seqMap: new Map(),
+        callbackMap: new Map(),
+        nextSeq: 0,
+    };
+    globalThis.setTimeout = function (callback, delay, ...args) {
+        const seq = patchState.nextSeq++;
+        const fn = typeof callback === &quot;string&quot; ? () =&gt; eval(callback) : callback;
+        const rawId = origSetTimeout.call(globalThis, (...cbArgs) =&gt; {
+            patchState.seqMap.delete(rawId);
+            patchState.callbackMap.delete(seq);
+            emit({
+                type: &quot;timer&quot;,
+                kind: &quot;timeout&quot;,
+                seq,
+                scheduledDelay: delay ?? 0,
+                actualTime: Date.now(),
+            });
+            fn(...cbArgs);
+        }, delay, ...args);
+        patchState.seqMap.set(rawId, seq);
+        patchState.callbackMap.set(seq, fn);
+        return rawId;
+    };
+    globalThis.setInterval = function (callback, delay, ...args) {
+        const seq = patchState.nextSeq++;
+        const fn = typeof callback === &quot;string&quot; ? () =&gt; eval(callback) : callback;
+        const rawId = origSetInterval.call(globalThis, (...cbArgs) =&gt; {
+            emit({
+                type: &quot;timer&quot;,
+                kind: &quot;interval&quot;,
+                seq,
+                scheduledDelay: delay ?? 0,
+                actualTime: Date.now(),
+            });
+            fn(...cbArgs);
+        }, delay, ...args);
+        patchState.seqMap.set(rawId, seq);
+        patchState.callbackMap.set(seq, fn);
+        return rawId;
+    };
+    globalThis.clearTimeout = function (id) {
+        if (id !== undefined) {
+            const seq = patchState.seqMap.get(id);
+            if (seq !== undefined) {
+                patchState.seqMap.delete(id);
+                patchState.callbackMap.delete(seq);
+            }
+        }
+        origClearTimeout.call(globalThis, id);
+    };
+    globalThis.clearInterval = function (id) {
+        if (id !== undefined) {
+            const seq = patchState.seqMap.get(id);
+            if (seq !== undefined) {
+                patchState.seqMap.delete(id);
+                patchState.callbackMap.delete(seq);
+            }
+        }
+        origClearInterval.call(globalThis, id);
+    };
+    function uninstall() {
+        globalThis.setTimeout = origSetTimeout;
+        globalThis.setInterval = origSetInterval;
+        globalThis.clearTimeout = origClearTimeout;
+        globalThis.clearInterval = origClearInterval;
+        patchState.seqMap.clear();
+        patchState.callbackMap.clear();
+    }
+    return { uninstall, state: patchState };
+}
+
+/* ---------- patches/network.js ---------- */
+/**
+ * Network patch — intercepts fetch().
+ *
+ * Assigns monotonic sequence numbers to each request. Records the
+ * response (status, content-type header, text body) when it resolves.
+ * XMLHttpRequest interception deferred to a future patch.
+ */
+function installNetworkPatch(emit) {
+    const origFetch = globalThis.fetch;
+    let nextSeq = 0;
+    globalThis.fetch = async function (input, init) {
+        const seq = nextSeq++;
+        const url = typeof input === &quot;string&quot; ? input : input instanceof URL ? input.href : input.url;
+        const method = init?.method ?? &quot;GET&quot;;
+        const response = await origFetch.call(globalThis, input, init);
+        // Clone so we can read the body without consuming the original
+        const clone = response.clone();
+        let body = null;
+        try {
+            body = await clone.text();
+        }
+        catch {
+            body = null;
+        }
+        emit({
+            type: &quot;network&quot;,
+            kind: &quot;fetch&quot;,
+            seq,
+            url,
+            method,
+            status: response.status,
+            headers: { &quot;content-type&quot;: response.headers.get(&quot;content-type&quot;) ?? &quot;&quot; },
+            body,
+        });
+        return response;
+    };
+    return function uninstall() {
+        globalThis.fetch = origFetch;
+    };
+}
+
+/* ---------- patches/storage.js ---------- */
+/**
+ * Storage patch — intercepts localStorage and sessionStorage.
+ *
+ * Records get/set/remove operations so replicas have identical
+ * storage state without needing shared persistence.
+ */
+function patchStorage(storage, kind, emit) {
+    const origGetItem = storage.getItem.bind(storage);
+    const origSetItem = storage.setItem.bind(storage);
+    const origRemoveItem = storage.removeItem.bind(storage);
+    storage.getItem = function (key) {
+        const value = origGetItem(key);
+        emit({ type: &quot;storage&quot;, kind, action: &quot;get&quot;, key, value });
+        return value;
+    };
+    storage.setItem = function (key, value) {
+        origSetItem(key, value);
+        emit({ type: &quot;storage&quot;, kind, action: &quot;set&quot;, key, value });
+    };
+    storage.removeItem = function (key) {
+        origRemoveItem(key);
+        emit({ type: &quot;storage&quot;, kind, action: &quot;remove&quot;, key, value: null });
+    };
+    return function uninstall() {
+        storage.getItem = origGetItem;
+        storage.setItem = origSetItem;
+        storage.removeItem = origRemoveItem;
+    };
+}
+function installStoragePatch(emit) {
+    const uninstallers = [];
+    if (typeof globalThis.localStorage !== &quot;undefined&quot;) {
+        uninstallers.push(patchStorage(globalThis.localStorage, &quot;local&quot;, emit));
+    }
+    if (typeof globalThis.sessionStorage !== &quot;undefined&quot;) {
+        uninstallers.push(patchStorage(globalThis.sessionStorage, &quot;session&quot;, emit));
+    }
+    return function uninstall() {
+        for (const fn of uninstallers)
+            fn();
+    };
+}
+
+/* ---------- target.js ---------- */
+/**
+ * Element targeting — generates deterministic CSS selector paths.
+ *
+ * Given a DOM element, produces a selector string that uniquely
+ * identifies it in the document. Uses tag#id when available,
+ * falls back to tag:nth-child(n) ancestry chains.
+ */
+function getTargetPath(element) {
+    if (element === document.documentElement)
+        return &quot;html&quot;;
+    if (element === document.body)
+        return &quot;body&quot;;
+    const parts = [];
+    let current = element;
+    while (current &amp;&amp; current !== document.documentElement) {
+        const tag = current.tagName.toLowerCase();
+        if (current.id) {
+            parts.unshift(`${tag}#${current.id}`);
+            break;
+        }
+        const parent = current.parentElement;
+        if (!parent) {
+            parts.unshift(tag);
+            break;
+        }
+        const siblings = Array.from(parent.children);
+        const sameTag = siblings.filter((s) =&gt; s.tagName === current.tagName);
+        if (sameTag.length === 1) {
+            parts.unshift(tag);
+        }
+        else {
+            const index = sameTag.indexOf(current) + 1;
+            parts.unshift(`${tag}:nth-of-type(${index})`);
+        }
+        current = parent;
+    }
+    return parts.join(&quot; &gt; &quot;);
+}
+function resolveTargetPath(path) {
+    try {
+        return document.querySelector(path);
+    }
+    catch {
+        return null;
+    }
+}
+
+/* ---------- patches/events.js ---------- */
+/**
+ * Event patch — intercepts addEventListener to record DOM events.
+ *
+ * When a registered event handler fires, records an EventOp with
+ * the target's CSS selector path and event-specific details.
+ */
+
+/** Extract serializable details from a DOM event. */
+function extractDetail(event) {
+    const detail = {};
+    if (event instanceof MouseEvent) {
+        detail.clientX = event.clientX;
+        detail.clientY = event.clientY;
+        detail.button = event.button;
+        detail.buttons = event.buttons;
+    }
+    if (event instanceof KeyboardEvent) {
+        detail.key = event.key;
+        detail.code = event.code;
+        detail.altKey = event.altKey;
+        detail.ctrlKey = event.ctrlKey;
+        detail.shiftKey = event.shiftKey;
+        detail.metaKey = event.metaKey;
+    }
+    if (event instanceof InputEvent) {
+        detail.data = event.data;
+        detail.inputType = event.inputType;
+    }
+    // Capture input/textarea/select value for input/change events
+    if ((event.type === &quot;input&quot; || event.type === &quot;change&quot;) &amp;&amp;
+        event.target &amp;&amp;
+        &quot;value&quot; in event.target) {
+        detail.value = event.target.value;
+    }
+    if (event.type === &quot;scroll&quot; &amp;&amp; event.target) {
+        const el = event.target;
+        detail.scrollTop = el.scrollTop;
+        detail.scrollLeft = el.scrollLeft;
+    }
+    return detail;
+}
+function installEventPatch(emit) {
+    const origAddEventListener = EventTarget.prototype.addEventListener;
+    const origRemoveEventListener = EventTarget.prototype.removeEventListener;
+    // Track wrapped handlers so removeEventListener works correctly
+    const wrapperMap = new WeakMap();
+    EventTarget.prototype.addEventListener = function (type, listener, options) {
+        if (!listener) {
+            return origAddEventListener.call(this, type, listener, options);
+        }
+        const handler = typeof listener === &quot;function&quot; ? listener : listener.handleEvent.bind(listener);
+        const self = this;
+        const wrapper = function (event) {
+            // Only record events on DOM elements (not on window timers etc.)
+            if (event.target instanceof Element) {
+                emit({
+                    type: &quot;event&quot;,
+                    eventType: event.type,
+                    targetPath: getTargetPath(event.target),
+                    timestamp: event.timeStamp,
+                    detail: extractDetail(event),
+                });
+            }
+            return handler.call(this, event);
+        };
+        wrapperMap.set(handler, wrapper);
+        return origAddEventListener.call(self, type, wrapper, options);
+    };
+    EventTarget.prototype.removeEventListener = function (type, listener, options) {
+        if (!listener) {
+            return origRemoveEventListener.call(this, type, listener, options);
+        }
+        const handler = typeof listener === &quot;function&quot; ? listener : listener.handleEvent.bind(listener);
+        const wrapper = wrapperMap.get(handler);
+        if (wrapper) {
+            wrapperMap.delete(handler);
+            return origRemoveEventListener.call(this, type, wrapper, options);
+        }
+        return origRemoveEventListener.call(this, type, listener, options);
+    };
+    return function uninstall() {
+        EventTarget.prototype.addEventListener = origAddEventListener;
+        EventTarget.prototype.removeEventListener = origRemoveEventListener;
+    };
+}
+
+/* ---------- recorder.js ---------- */
+/**
+ * Recorder — captures event loop inputs as ops.
+ *
+ * Installs monkey-patches on enabled subsystems (events, timers,
+ * network, random, clock, storage), batches emitted ops, and
+ * delivers them via the onOps callback.
+ */
+function createRecorder(options) {
+    const { onOps, batchMode = &quot;microtask&quot;, events: enableEvents = true, timers: enableTimers = true, network: enableNetwork = true, random: enableRandom = true, clock: enableClock = true, storage: enableStorage = true, } = options;
+    let pending = [];
+    let scheduled = false;
+    let running = false;
+    const uninstallers = [];
+    const flush = () =&gt; {
+        scheduled = false;
+        if (pending.length === 0)
+            return;
+        const batch = pending;
+        pending = [];
+        onOps(batch);
+    };
+    const schedule = () =&gt; {
+        if (scheduled || !running)
+            return;
+        scheduled = true;
+        if (batchMode === &quot;sync&quot;) {
+            flush();
+        }
+        else if (batchMode === &quot;raf&quot; &amp;&amp; typeof requestAnimationFrame === &quot;function&quot;) {
+            requestAnimationFrame(flush);
+        }
+        else {
+            queueMicrotask(flush);
+        }
+    };
+    const emit = (op) =&gt; {
+        if (!running)
+            return;
+        pending.push(op);
+        schedule();
+    };
+    function start() {
+        if (running)
+            return;
+        running = true;
+        if (enableClock) {
+            uninstallers.push(installClockPatch(emit));
+        }
+        if (enableRandom) {
+            uninstallers.push(installRandomPatch(emit));
+        }
+        if (enableTimers) {
+            const { uninstall } = installTimerPatch(emit);
+            uninstallers.push(uninstall);
+        }
+        if (enableNetwork) {
+            uninstallers.push(installNetworkPatch(emit));
+        }
+        if (enableStorage) {
+            uninstallers.push(installStoragePatch(emit));
+        }
+        // Event patch requires DOM — install only if EventTarget exists
+        if (enableEvents &amp;&amp; typeof EventTarget !== &quot;undefined&quot;) {
+            import(&quot;./patches/events.js&quot;).then(({ installEventPatch }) =&gt; {
+                if (running) {
+                    uninstallers.push(installEventPatch(emit));
+                }
+            });
+        }
+    }
+    function stop() {
+        if (!running)
+            return;
+        running = false;
+        flush();
+        for (const fn of uninstallers)
+            fn();
+        uninstallers.length = 0;
+    }
+    function snapshot() {
+        return {
+            type: &quot;snapshot&quot;,
+            html: typeof document !== &quot;undefined&quot; ? document.documentElement.outerHTML : &quot;&quot;,
+            url: typeof location !== &quot;undefined&quot; ? location.href : &quot;&quot;,
+            timestamp: Date.now(),
+            pendingTimers: [],
+            pendingNetwork: [],
+        };
+    }
+    function destroy() {
+        stop();
+        pending = [];
+    }
+    return { start, stop, snapshot, destroy };
+}
+
+/* ---------- player.js ---------- */
+/**
+ * Player — replays event loop ops on a follower runtime.
+ *
+ * Monkey-patches globals on the follower so that Math.random(),
+ * Date.now(), fetch(), etc. return recorded values. DOM events
+ * are dispatched to the correct elements via CSS selector paths.
+ */
+function createPlayer(options = {}) {
+    const { events: enableEvents = true, timers: enableTimers = true, network: enableNetwork = true, random: enableRandom = true, clock: enableClock = true, storage: enableStorage = true, } = options;
+    // Queues for deterministic value replay
+    const randomQueue = [];
+    const clockQueue = [];
+    const fetchQueue = new Map();
+    // Save originals for cleanup
+    const origRandom = Math.random;
+    const origDateNow = Date.now;
+    const origFetch = globalThis.fetch;
+    let installed = false;
+    function install() {
+        if (installed)
+            return;
+        installed = true;
+        if (enableRandom) {
+            Math.random = function () {
+                if (randomQueue.length &gt; 0)
+                    return randomQueue.shift();
+                return origRandom();
+            };
+        }
+        if (enableClock) {
+            Date.now = function () {
+                if (clockQueue.length &gt; 0)
+                    return clockQueue.shift();
+                return origDateNow.call(Date);
+            };
+        }
+        if (enableNetwork) {
+            globalThis.fetch = async function (input, init) {
+                // Check if we have a queued response for this request
+                for (const [seq, entry] of fetchQueue) {
+                    const url = typeof input === &quot;string&quot; ? input : input instanceof URL ? input.href : input.url;
+                    if (entry.op.url === url) {
+                        fetchQueue.delete(seq);
+                        return new Response(entry.op.body, {
+                            status: entry.op.status ?? 200,
+                            headers: entry.op.headers ?? {},
+                        });
+                    }
+                }
+                // No recorded response — fall through to real fetch
+                return origFetch.call(globalThis, input, init);
+            };
+        }
+    }
+    function applyEvent(op) {
+        if (!enableEvents)
+            return;
+        if (typeof document === &quot;undefined&quot;)
+            return;
+        const target = document.querySelector(op.targetPath);
+        if (!target)
+            return;
+        let event;
+        const d = op.detail;
+        if (op.eventType.startsWith(&quot;mouse&quot;) || op.eventType === &quot;click&quot; || op.eventType === &quot;dblclick&quot;) {
+            event = new MouseEvent(op.eventType, {
+                bubbles: true,
+                cancelable: true,
+                clientX: d.clientX,
+                clientY: d.clientY,
+                button: d.button,
+            });
+        }
+        else if (op.eventType.startsWith(&quot;key&quot;)) {
+            event = new KeyboardEvent(op.eventType, {
+                bubbles: true,
+                cancelable: true,
+                key: d.key,
+                code: d.code,
+                altKey: d.altKey,
+                ctrlKey: d.ctrlKey,
+                shiftKey: d.shiftKey,
+                metaKey: d.metaKey,
+            });
+        }
+        else if (op.eventType === &quot;input&quot; || op.eventType === &quot;change&quot;) {
+            if (&quot;value&quot; in d &amp;&amp; &quot;value&quot; in target) {
+                target.value = d.value;
+            }
+            event = new Event(op.eventType, { bubbles: true, cancelable: true });
+        }
+        else {
+            event = new Event(op.eventType, { bubbles: true, cancelable: true });
+        }
+        target.dispatchEvent(event);
+    }
+    function applyTimer(_op) {
+        // Timer replay: the follower's code registered the same timers
+        // in the same order. When a TimerOp arrives, we just let the
+        // follower's native timer fire naturally — the seq numbers
+        // ensure ordering consistency. For more precise control, the
+        // timer patch on the follower side would intercept and fire
+        // callbacks by seq. This is deferred to a future refinement.
+    }
+    function applyNetwork(op) {
+        if (!enableNetwork)
+            return;
+        fetchQueue.set(op.seq, {
+            resolve: () =&gt; { },
+            op,
+        });
+    }
+    function applyRandom(op) {
+        if (!enableRandom)
+            return;
+        randomQueue.push(...op.values);
+    }
+    function applyClock(op) {
+        if (!enableClock)
+            return;
+        clockQueue.push(op.value);
+    }
+    function applyStorage(op) {
+        if (!enableStorage)
+            return;
+        const storage = op.kind === &quot;local&quot;
+            ? (typeof localStorage !== &quot;undefined&quot; ? localStorage : null)
+            : (typeof sessionStorage !== &quot;undefined&quot; ? sessionStorage : null);
+        if (!storage)
+            return;
+        if (op.action === &quot;set&quot; &amp;&amp; op.value !== null) {
+            storage.setItem(op.key, op.value);
+        }
+        else if (op.action === &quot;remove&quot;) {
+            storage.removeItem(op.key);
+        }
+        // &quot;get&quot; ops are informational — no action needed on replay
+    }
+    function applySnapshot(op) {
+        if (typeof document === &quot;undefined&quot;)
+            return;
+        document.documentElement.innerHTML = op.html;
+    }
+    function apply(ops) {
+        install();
+        for (const op of ops) {
+            switch (op.type) {
+                case &quot;event&quot;:
+                    applyEvent(op);
+                    break;
+                case &quot;timer&quot;:
+                    applyTimer(op);
+                    break;
+                case &quot;network&quot;:
+                    applyNetwork(op);
+                    break;
+                case &quot;random&quot;:
+                    applyRandom(op);
+                    break;
+                case &quot;clock&quot;:
+                    applyClock(op);
+                    break;
+                case &quot;storage&quot;:
+                    applyStorage(op);
+                    break;
+                case &quot;snapshot&quot;:
+                    applySnapshot(op);
+                    break;
+                case &quot;navigation&quot;: break; // deferred
+            }
+        }
+    }
+    function destroy() {
+        if (!installed)
+            return;
+        installed = false;
+        Math.random = origRandom;
+        Date.now = origDateNow;
+        globalThis.fetch = origFetch;
+        randomQueue.length = 0;
+        clockQueue.length = 0;
+        fetchQueue.clear();
+    }
+    return { apply, destroy };
+}
+
+
+window.remjs = {
+  createRecorder,
+  createPlayer,
+  jsonCodec,
+};
+
+})();&lt;/script&gt;
+  &lt;script&gt;
+(function() {
+  var isFollower = (window.location.hash === &quot;#follower&quot;) || window.__remjs_follower;
+  var { createRecorder, createPlayer, jsonCodec } = window.remjs;
+
+  var canvas = document.getElementById(&quot;canvas&quot;);
+  var ctx = canvas.getContext(&quot;2d&quot;);
+
+  /* ── geometry ─────────────────────────────────────────── */
+  var W = 560, H = 420;
+  var LAUNCHER = { x: W / 2, y: H - 34 };
+  var TARGET = { x: W / 2, y: 70 };
+  var ZONES = [
+    { r: 22, pts: 5, color: &quot;#f0c040&quot; },
+    { r: 46, pts: 3, color: &quot;#6fa8dc&quot; },
+    { r: 74, pts: 1, color: &quot;#3e5978&quot; },
+  ];
+  var PUCK_R = 14, FRICTION = 0.985, REST = 0.2, BOUNCE = 0.9;
+
+  /* ── state ────────────────────────────────────────────── */
+  var pucks = [];
+  var nextId = 1;
+  var score = 0;
+  var drag = null;
+
+  function canvasXY(ev) {
+    var r = canvas.getBoundingClientRect();
+    return { x: (ev.clientX - r.left) / r.width * W, y: (ev.clientY - r.top) / r.height * H };
+  }
+
+  /* ── game logic ───────────────────────────────────────── */
+  function launchPuck(aimX, aimY) {
+    var dx = aimX - LAUNCHER.x, dy = aimY - LAUNCHER.y;
+    var len = Math.hypot(dx, dy);
+    var power = Math.min(14, len / 14);
+    if (power &lt; 0.5) return;
+    var nx = dx / (len || 1), ny = dy / (len || 1);
+    var id = nextId++;
+    pucks.push({
+      id: id, x: LAUNCHER.x, y: LAUNCHER.y,
+      vx: nx * power, vy: ny * power,
+      color: &quot;hsl(&quot; + ((id * 53) % 360) + &quot;, 80%, 60%)&quot;,
+      stopped: false, points: 0,
+    });
+  }
+
+  function scorePuck(x, y) {
+    var d = Math.hypot(x - TARGET.x, y - TARGET.y);
+    for (var z of ZONES) if (d &lt;= z.r) return z.pts;
+    return 0;
+  }
+
+  function step() {
+    for (var p of pucks) {
+      if (p.stopped) continue;
+      p.x += p.vx; p.y += p.vy;
+      p.vx *= FRICTION; p.vy *= FRICTION;
+      if (p.x &lt; PUCK_R) { p.x = PUCK_R; p.vx = -p.vx * 0.85; }
+      else if (p.x &gt; W - PUCK_R) { p.x = W - PUCK_R; p.vx = -p.vx * 0.85; }
+      if (p.y &lt; PUCK_R) { p.y = PUCK_R; p.vy = -p.vy * 0.85; }
+      else if (p.y &gt; H - PUCK_R) { p.y = H - PUCK_R; p.vy = -p.vy * 0.85; }
+    }
+    // collisions
+    for (var i = 0; i &lt; pucks.length; i++) {
+      var a = pucks[i];
+      for (var j = i + 1; j &lt; pucks.length; j++) {
+        var b = pucks[j];
+        var dx = b.x - a.x, dy = b.y - a.y;
+        var ds = dx * dx + dy * dy, md = PUCK_R * 2;
+        if (ds &gt;= md * md || ds === 0) continue;
+        var d = Math.sqrt(ds);
+        var nx = dx / d, ny = dy / d, ov = (md - d) / 2;
+        a.x -= nx * ov; a.y -= ny * ov;
+        b.x += nx * ov; b.y += ny * ov;
+        var rvn = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
+        if (rvn &gt; 0) continue;
+        var imp = -(1 + BOUNCE) * rvn / 2;
+        a.vx -= imp * nx; a.vy -= imp * ny;
+        b.vx += imp * nx; b.vy += imp * ny;
+        if (a.stopped) { a.stopped = false; a.points = 0; }
+        if (b.stopped) { b.stopped = false; b.points = 0; }
+      }
+    }
+    // scoring
+    score = 0;
+    for (var p of pucks) {
+      if (!p.stopped &amp;&amp; Math.hypot(p.vx, p.vy) &lt; REST) {
+        p.stopped = true; p.vx = 0; p.vy = 0;
+        p.points = scorePuck(p.x, p.y);
+      }
+      if (p.stopped) score += p.points;
+    }
+  }
+
+  /* ── draw ──────────────────────────────────────────────── */
+  function draw() {
+    // Sync canvas buffer to display size
+    var rect = canvas.getBoundingClientRect();
+    if (canvas.width !== W || canvas.height !== H) {
+      canvas.width = W; canvas.height = H;
+    }
+
+    ctx.fillStyle = &quot;#06080d&quot;;
+    ctx.fillRect(0, 0, W, H);
+
+    // zones
+    for (var i = ZONES.length - 1; i &gt;= 0; i--) {
+      var z = ZONES[i];
+      ctx.fillStyle = z.color; ctx.globalAlpha = 0.18;
+      ctx.beginPath(); ctx.arc(TARGET.x, TARGET.y, z.r, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1; ctx.strokeStyle = z.color; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(TARGET.x, TARGET.y, z.r, 0, Math.PI * 2); ctx.stroke();
+    }
+
+    // launcher
+    ctx.fillStyle = &quot;#8b949e&quot;;
+    ctx.beginPath();
+    ctx.moveTo(LAUNCHER.x - 12, LAUNCHER.y + 10);
+    ctx.lineTo(LAUNCHER.x + 12, LAUNCHER.y + 10);
+    ctx.lineTo(LAUNCHER.x, LAUNCHER.y - 10);
+    ctx.closePath(); ctx.fill();
+
+    // pucks
+    for (var p of pucks) {
+      ctx.fillStyle = p.color;
+      ctx.globalAlpha = p.stopped ? 0.9 : 1;
+      ctx.beginPath(); ctx.arc(p.x, p.y, PUCK_R, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = &quot;#fff&quot;; ctx.font = &quot;bold 11px sans-serif&quot;;
+      ctx.textAlign = &quot;center&quot;; ctx.textBaseline = &quot;middle&quot;;
+      ctx.fillText(String(p.id), p.x, p.y);
+    }
+
+    // score
+    ctx.fillStyle = &quot;#58a6ff&quot;; ctx.font = &quot;bold 20px sans-serif&quot;;
+    ctx.textAlign = &quot;right&quot;; ctx.textBaseline = &quot;top&quot;;
+    ctx.fillText(String(score), W - 8, 6);
+    ctx.font = &quot;10px sans-serif&quot;; ctx.fillStyle = &quot;#8b949e&quot;;
+    ctx.fillText(&quot;score&quot;, W - 8, 28);
+
+    // label
+    ctx.fillStyle = isFollower ? &quot;#bc8cff&quot; : &quot;#58a6ff&quot;;
+    ctx.font = &quot;10px sans-serif&quot;; ctx.textAlign = &quot;left&quot;; ctx.textBaseline = &quot;top&quot;;
+    ctx.fillText(isFollower ? &quot;follower — replayed inputs&quot; : &quot;source — real inputs&quot;, 8, 6);
+  }
+
+  /* ── input ────────────────────────────────────────────── */
+  canvas.addEventListener(&quot;pointerdown&quot;, function(ev) { drag = canvasXY(ev); canvas.setPointerCapture(ev.pointerId); });
+  canvas.addEventListener(&quot;pointermove&quot;, function(ev) { if (drag) drag = canvasXY(ev); });
+  canvas.addEventListener(&quot;pointerup&quot;, function() { if (drag) { launchPuck(drag.x, drag.y); drag = null; } });
+  canvas.addEventListener(&quot;pointercancel&quot;, function() { drag = null; });
+
+  /* ── main loop ────────────────────────────────────────── */
+  function loop() {
+    step();
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  /* ── v0.3 event loop replication ──────────────────────── */
+  if (isFollower) {
+    // Follower: install player, receive ops via postMessage
+    var player = createPlayer();
+    window.addEventListener(&quot;message&quot;, function(ev) {
+      if (ev.data &amp;&amp; ev.data.type === &quot;remjs-ops&quot;) {
+        player.apply(ev.data.ops);
+      }
+    });
+    // Tell parent we're ready
+    if (window.parent !== window) {
+      window.parent.postMessage({ type: &quot;remjs-follower-ready&quot; }, &quot;*&quot;);
+    }
+  } else {
+    // Source: install recorder, send ops to follower iframe
+    var followerFrame = null;
+    var recorder = createRecorder({
+      onOps: function(ops) {
+        if (followerFrame) {
+          followerFrame.postMessage({ type: &quot;remjs-ops&quot;, ops: ops }, &quot;*&quot;);
+        }
+      },
+      batchMode: &quot;sync&quot;,
+      events: true,
+      timers: true,
+      random: true,
+      clock: true,
+      network: false,
+      storage: false,
+    });
+
+    window.addEventListener(&quot;message&quot;, function(ev) {
+      if (ev.data &amp;&amp; ev.data.type === &quot;remjs-follower-ready&quot;) {
+        followerFrame = ev.source;
+      }
+    });
+
+    recorder.start();
+  }
+
+  requestAnimationFrame(loop);
+})();
+  &lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;"></iframe>
+    </div>
+  </div>
+  <script>
+    // Wire source → mirror: forward recorded ops between iframes
+    var sourceWin = document.getElementById("sourceFrame").contentWindow;
+    var mirrorWin = document.getElementById("mirrorFrame").contentWindow;
+    window.addEventListener("message", function(ev) {
+      if (ev.data && ev.data.type === "remjs-ops" && ev.source === sourceWin) {
+        mirrorWin.postMessage(ev.data, "*");
+      }
+      if (ev.data && ev.data.type === "remjs-follower-ready" && ev.source === mirrorWin) {
+        sourceWin.postMessage(ev.data, "*");
+      }
+    });
+  </script>
+</body>
 </html>
