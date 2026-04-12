@@ -188,7 +188,11 @@ function drainTemporal(){
         if(op.type==="frame")mirrorFrame=op;
         ac++;var r=document.getElementById("o"+ac);if(r)r.className="orow done";
         applied++;
-        if(applied===batch.length)draining=false;
+        if(applied===batch.length){
+          draining=false;
+          // Flush any ops that arrived during the drain
+          if(!paused)applyAllInstant();
+        }
         upd();
       },delay);
       drainTimers.push(t);
