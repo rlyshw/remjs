@@ -237,24 +237,20 @@ const GAME_PAGE = (bundle) => `<!doctype html>
 
   /* ── v0.3 event loop replication ──────────────────────── */
   if (isFollower) {
-    // Follower: install player, receive ops via postMessage
+    // Follower: install player, receive ops from parent via postMessage
     var player = createPlayer();
     window.addEventListener("message", function(ev) {
       if (ev.data && ev.data.type === "remjs-ops") {
         player.apply(ev.data.ops);
       }
     });
-    // Tell parent we're ready
-    if (window.parent !== window) {
-      window.parent.postMessage({ type: "remjs-follower-ready" }, "*");
-    }
   } else {
-    // Source: install recorder, send ops to follower iframe
-    var followerFrame = null;
+    // Source: install recorder, send ops UP to parent who relays to mirror
     var recorder = createRecorder({
       onOps: function(ops) {
-        if (followerFrame) {
-          followerFrame.postMessage({ type: "remjs-ops", ops: ops }, "*");
+        // Post to parent (the mirror/embed page relays to the follower iframe)
+        if (window.parent !== window) {
+          window.parent.postMessage({ type: "remjs-source-ops", ops: ops }, "*");
         }
       },
       batchMode: "sync",
@@ -264,12 +260,6 @@ const GAME_PAGE = (bundle) => `<!doctype html>
       clock: true,
       network: false,
       storage: false,
-    });
-
-    window.addEventListener("message", function(ev) {
-      if (ev.data && ev.data.type === "remjs-follower-ready") {
-        followerFrame = ev.source;
-      }
     });
 
     recorder.start();
@@ -323,23 +313,27 @@ const MIRROR_PAGE = (gameHtml) => `<!doctype html>
   <div class="panels">
     <div class="panel source">
       <div class="panel-label"><span class="side">source — real inputs</span></div>
-      <iframe id="sourceFrame" srcdoc="${escapeAttr(gameHtml)}"></iframe>
+      <iframe id="sourceFrame"></iframe>
     </div>
     <div class="panel mirror">
       <div class="panel-label"><span class="side">follower — replayed inputs</span></div>
-      <iframe id="mirrorFrame" srcdoc="${escapeAttr(gameHtml.replace('</head>', '<script>window.__remjs_follower=true;</script></head>'))}"></iframe>
+      <iframe id="mirrorFrame"></iframe>
     </div>
   </div>
   <script>
-    // Wire source → mirror: forward recorded ops between iframes
-    var sourceWin = document.getElementById("sourceFrame").contentWindow;
-    var mirrorWin = document.getElementById("mirrorFrame").contentWindow;
+    // Use blob: URLs instead of srcdoc so postMessage works across origins
+    var gameHtml = ${JSON.stringify(gameHtml)};
+    var followerHtml = gameHtml.replace("</head>", "<script>window.__remjs_follower=true;<\\/script></head>");
+    var sourceBlob = new Blob([gameHtml], {type: "text/html"});
+    var mirrorBlob = new Blob([followerHtml], {type: "text/html"});
+    document.getElementById("sourceFrame").src = URL.createObjectURL(sourceBlob);
+    document.getElementById("mirrorFrame").src = URL.createObjectURL(mirrorBlob);
+
+    // Relay: source posts "remjs-source-ops" up to us, we forward as "remjs-ops" down to mirror
+    var mirrorFrame = document.getElementById("mirrorFrame");
     window.addEventListener("message", function(ev) {
-      if (ev.data && ev.data.type === "remjs-ops" && ev.source === sourceWin) {
-        mirrorWin.postMessage(ev.data, "*");
-      }
-      if (ev.data && ev.data.type === "remjs-follower-ready" && ev.source === mirrorWin) {
-        sourceWin.postMessage(ev.data, "*");
+      if (ev.data && ev.data.type === "remjs-source-ops") {
+        mirrorFrame.contentWindow.postMessage({ type: "remjs-ops", ops: ev.data.ops }, "*");
       }
     });
   </script>
@@ -376,22 +370,22 @@ const EMBED_PAGE = (gameHtml) => `<!doctype html>
   <div class="panels">
     <div class="panel source">
       <span class="label">source</span>
-      <iframe id="sourceFrame" srcdoc="${escapeAttr(gameHtml)}"></iframe>
+      <iframe id="sourceFrame"></iframe>
     </div>
     <div class="panel mirror">
       <span class="label">follower</span>
-      <iframe id="mirrorFrame" srcdoc="${escapeAttr(gameHtml.replace('</head>', '<script>window.__remjs_follower=true;</script></head>'))}"></iframe>
+      <iframe id="mirrorFrame"></iframe>
     </div>
   </div>
   <script>
-    var sourceWin = document.getElementById("sourceFrame").contentWindow;
-    var mirrorWin = document.getElementById("mirrorFrame").contentWindow;
+    var gameHtml = ${JSON.stringify(gameHtml)};
+    var followerHtml = gameHtml.replace("</head>", "<script>window.__remjs_follower=true;<\\/script></head>");
+    document.getElementById("sourceFrame").src = URL.createObjectURL(new Blob([gameHtml], {type:"text/html"}));
+    document.getElementById("mirrorFrame").src = URL.createObjectURL(new Blob([followerHtml], {type:"text/html"}));
+    var mirrorFrame = document.getElementById("mirrorFrame");
     window.addEventListener("message", function(ev) {
-      if (ev.data && ev.data.type === "remjs-ops" && ev.source === sourceWin) {
-        mirrorWin.postMessage(ev.data, "*");
-      }
-      if (ev.data && ev.data.type === "remjs-follower-ready" && ev.source === mirrorWin) {
-        sourceWin.postMessage(ev.data, "*");
+      if (ev.data && ev.data.type === "remjs-source-ops") {
+        mirrorFrame.contentWindow.postMessage({ type: "remjs-ops", ops: ev.data.ops }, "*");
       }
     });
   </script>

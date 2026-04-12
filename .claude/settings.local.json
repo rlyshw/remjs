@@ -81,7 +81,10 @@
       "Bash(curl -s http://localhost:9222/json)",
       "Bash(taskkill //F //IM msedge.exe)",
       "Bash(rm -f src/proxy.ts src/proxy-symbol.ts src/registry.ts src/apply.ts src/observer.ts src/stream.ts)",
-      "Bash(rm -f test/proxy.test.ts test/registry.test.ts test/observer.test.ts test/graph.test.ts test/batching.test.ts test/roundtrip.test.ts)"
+      "Bash(rm -f test/proxy.test.ts test/registry.test.ts test/observer.test.ts test/graph.test.ts test/batching.test.ts test/roundtrip.test.ts)",
+      "Bash(gh api:*)",
+      "Bash(gh run:*)",
+      "Bash(\"/c/Program Files \\(x86\\)/Microsoft/Edge/Application/msedge.exe\" --remote-debugging-port=9222 --headless=new --disable-gpu \"file:///C:/Users/rlyshw.TOASTER/Development/claude/remjs/docs/mirror-embed.html\")"
     ]
   }
 }

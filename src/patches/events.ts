@@ -14,7 +14,13 @@ export type Emit = (op: EventOp) => void;
 function extractDetail(event: Event): Record<string, unknown> {
   const detail: Record<string, unknown> = {};
 
-  if (event instanceof MouseEvent) {
+  if (typeof PointerEvent !== "undefined" && event instanceof PointerEvent) {
+    detail.clientX = event.clientX;
+    detail.clientY = event.clientY;
+    detail.button = event.button;
+    detail.buttons = event.buttons;
+    detail.pointerId = event.pointerId;
+  } else if (event instanceof MouseEvent) {
     detail.clientX = event.clientX;
     detail.clientY = event.clientY;
     detail.button = event.button;

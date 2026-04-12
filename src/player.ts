@@ -91,7 +91,17 @@ export function createPlayer(options: PlayerOptions = {}): Player {
     let event: Event;
     const d = op.detail;
 
-    if (op.eventType.startsWith("mouse") || op.eventType === "click" || op.eventType === "dblclick") {
+    if (op.eventType.startsWith("pointer")) {
+      event = new PointerEvent(op.eventType, {
+        bubbles: true,
+        cancelable: true,
+        clientX: d.clientX as number,
+        clientY: d.clientY as number,
+        button: d.button as number,
+        buttons: d.buttons as number,
+        pointerId: (d.pointerId as number) ?? 1,
+      });
+    } else if (op.eventType.startsWith("mouse") || op.eventType === "click" || op.eventType === "dblclick") {
       event = new MouseEvent(op.eventType, {
         bubbles: true,
         cancelable: true,
