@@ -1,89 +1,97 @@
 # remjs
 
-Streaming JavaScript execution state. Encodes heap mutations as a structured op stream so multiple JS runtimes can share live application state — the running program, not its rendered output.
+Event loop replication for JavaScript. Captures event loop inputs as structured ops so multiple JS runtimes produce identical execution — the running program, not its rendered output.
+
+## What this is
+
+remjs serializes a JavaScript program's execution by intercepting everything that enters the event loop: DOM events, timer fires, network responses, `Math.random()`, `Date.now()`. These inputs are encoded as structured ops and streamed to other runtimes. Replaying the same ops produces identical execution — same state, same side effects, same output.
+
+The formal model is a **replicated state machine**: same code + same inputs + same ordering = identical execution on every replica. The JS event loop's run-to-completion semantics make each task an atomic unit — the natural "op."
 
 ## What this is for
 
-remjs keeps JS execution state synchronized across independent runtimes. Each runtime executes the same application code. As state mutates on one side, ops stream to the other side and apply to its heap, so both sides continue executing with identical state.
+The target scenario is **peers that each run their own copy of an app** — multiplayer games, collaborative editors, real-time dashboards, distributed simulations. Each peer runs the full application code independently. remjs ensures they all receive the same event loop inputs, so they all produce the same state as a side effect of deterministic execution.
 
-The target scenario is **peers that each run their own copy of an app** — multiplayer games, collaborative editors, real-time dashboards, distributed simulations — where keeping the running programs in sync is the primary concern. Each peer renders its own UI from its own state; rendering is a local concern.
+remjs is a **protocol and codec**, not an architecture. It defines op shapes, how to encode/decode, how to record and replay. Topology (leader/follower, peer-to-peer), conflict resolution, and transport are implementation concerns — the framework doesn't prescribe them.
 
 ## Relationship to remdom
 
-remjs and remdom solve different problems at different layers of the stack:
+remjs and remdom reify different surfaces of the same runtime:
 
 ```
-remjs  → streams JS execution state (running program, shared between peers)
-remdom → streams DOM output state  (rendered document, server → thin clients)
+remdom → reifies the OUTPUT surface (DOM mutations)
+remjs  → reifies the INPUT surface  (event loop tasks)
 ```
 
-**remdom** is for "one source of truth renders, many passive viewers observe." The server executes the app and the DOM is the shared artifact. Clients don't run app code.
+**remdom** captures what comes OUT of the JS runtime — DOM mutations streamed to passive viewers who don't run app code.
 
-**remjs** is for "many peers each run the app, keep their state in sync." Every peer executes the code independently, and heap-level mutations propagate so they stay in lockstep. DOM is rendered locally on each side from the same state.
+**remjs** captures what goes IN to the JS runtime — event loop inputs replayed on peers who each run the same app code.
 
-They can be used independently. A system that uses remjs typically does not need remdom: if the application state is consistent across peers and each peer runs the same code, each peer's DOM is implicitly consistent as a side effect of deterministic execution.
+Together they form a complete round-trip: remjs replicates the program, remdom replicates its output. They can be used independently. A system using remjs typically doesn't need remdom — if every peer processes the same inputs, their DOMs are implicitly identical.
 
-## The idea
+## Architecture
 
-V8's `v8.serialize()` / `v8.deserialize()` can snapshot structured-cloneable values. But they work as full dumps, not streams. The goal is to stream deltas:
+```
+                    Recorder                              Player
+              ┌─────────────────┐                  ┌─────────────────┐
+  browser     │ monkey-patches: │                  │ replays:        │
+  event loop  │  addEventListener│                  │  dispatchEvent  │
+  inputs ───► │  setTimeout     │ ── ops[] ──────► │  seed random    │
+              │  fetch          │    (transport)   │  align clock    │
+              │  Math.random    │                  │  inject response│
+              │  Date.now       │                  │  fire callback  │
+              └─────────────────┘                  └─────────────────┘
+```
 
-- Intercept property assignments, object creation, Map/Set mutations, Array modifications
-- Emit structured ops describing each state change
-- Receiving side applies ops to reconstruct identical JS state
-- No full heap dump — continuous streaming of deltas as they happen
+The recorder installs monkey-patches on event loop entry points. When an input arrives (click, timer fire, fetch response, random value), it emits a structured op. The player receives ops and feeds them into the replica's event loop — dispatching events, seeding random values, aligning clocks.
 
-## Research questions
+No Proxy wrapping. No heap inspection. No framework hooks. Pure runtime patching of the environment API surface.
 
-1. **What's interceptable?** Proxy can wrap objects, but Proxy has overhead and doesn't cover primitives. Prototype patching covers property setters but not plain assignment.
-2. **Closures** — can closure state be observed? Not directly. Could be captured via source transformation (rewrite function bodies to emit ops on variable assignment).
-3. **Deterministic replay** — instead of serializing state, record all inputs (events, network, timers, random) and replay them. The state reconstruction is a side effect of identical execution.
-4. **Scope** — full heap is impractical. Scoped to application state (React state tree, Redux store, specific objects) is tractable.
-5. **Performance** — interception overhead per operation needs to be <1μs to be viable for hot paths.
+## Op types
 
-## Possible approaches
+| Type | What it captures |
+|------|-----------------|
+| `event` | DOM events — click, keydown, input, scroll, pointer* |
+| `timer` | setTimeout / setInterval / rAF callback fires |
+| `network` | fetch / XHR responses — status, headers, body |
+| `random` | Math.random() / crypto.getRandomValues() values |
+| `clock` | Date.now() / performance.now() timestamps |
+| `storage` | localStorage / sessionStorage reads and writes |
+| `navigation` | pushState / popstate / hashchange |
+| `snapshot` | Full page state for late-joining replicas |
 
-### A. Proxy-based object streaming
-Wrap target objects in Proxies that emit ops on mutation. Works for objects/arrays/maps. Doesn't work for primitives or closures.
+All ops are plain JSON. No tagged values, no special encoding.
 
-### B. Source transformation
-Babel plugin that rewrites JS to emit ops on every assignment. `x = 5` becomes `x = __remjs_set('x', 5)`. Captures everything but requires build step.
-
-### C. Record/replay
-Record every input to the JS engine (events, XHR responses, Date.now(), Math.random()) and replay deterministically. Used by Replay.io and rr. Full fidelity but requires instrumented environment.
-
-### D. V8 streaming snapshots
-Use V8's heap snapshot API but stream deltas between snapshots. Heavy, requires V8 internals access, but captures everything.
-
-## Practical first step
-
-Start with Proxy-based streaming for explicit state objects:
+## Core API
 
 ```typescript
-import { createStateStream } from 'remjs';
-
-const state = createStateStream({
-  count: 0,
-  todos: [],
-  user: { name: 'Alice' }
-}, {
-  onOps: (ops) => ws.send(JSON.stringify(ops))
+// Record event loop inputs
+const recorder = createRecorder({
+  onOps: (ops) => transport.send(ops),
 });
+recorder.start();
 
-// Mutations are automatically captured and streamed:
-state.count++;           // → { type: 'set', path: ['count'], value: 1 }
-state.todos.push('hi');  // → { type: 'arrayPush', path: ['todos'], value: 'hi' }
-state.user.name = 'Bob'; // → { type: 'set', path: ['user', 'name'], value: 'Bob' }
+// Replay on another runtime
+const player = createPlayer();
+transport.onMessage = (ops) => player.apply(ops);
 ```
 
-This is tractable now and immediately useful for streaming React/Redux state between peers.
+## Key design decisions
 
-## Current state
+- **Transport-agnostic**: the library emits ops and accepts ops. WebSocket, postMessage, BroadcastChannel, function call — your choice.
+- **Scope-agnostic**: the framework doesn't mandate global monkey-patching. You can intercept all event loop inputs or just specific ones (e.g. only pointer events on one canvas). The recorder accepts flags for each subsystem.
+- **Framework-agnostic**: no React hooks, no Vue plugins, no Babel transforms. Works with any JS code because it operates at the environment API level, below all frameworks.
+- **Op format is plain JSON**: no registry, no object IDs, no ref-based addressing. Ops describe inputs, not heap state.
 
-Scaffolded. Research phase.
+## Evolution
+
+- **v0.1–v0.2**: Proxy-based heap state capture. Worked for vanilla JS but broke for framework apps (React, Vue) that manage state in internal loops bypassing JS scope bindings. Proved that heap state is insufficient — a running program is an open system with side effects, pending tasks, and environmental interactions that can't be cloned by copying values.
+- **v0.3**: Event loop replication. Captures inputs instead of state. Same code + same inputs = identical execution. Framework-agnostic by design.
 
 ## Related repos
 
-- `../remdom/` — DOM output streaming (production)
+- `../remdom/` — DOM output streaming
 - `../remdom-browser/` — browser client for remdom
 - `../remdom-ios/` — iOS client for remdom
 - `../remdom-platform/` — managed service platform
+- `../remjs-proxy/` — Babel transform proxy server (private, uses remjs as dependency)

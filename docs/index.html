@@ -773,27 +773,30 @@
 
     <div class="hero-anim" aria-hidden="true">
       <div class="anim-pane anim-source">
-        <span class="anim-label">source</span><span class="tag-line op-static">state = {</span><span class="tag-line op-static">  todos: [</span><span class="tag-line op-text">    "<span class="text-before">apple</span><span class="text-after">apples</span>",</span><span class="tag-line op-remove-1">    "banana",</span><span class="tag-line op-remove-2">    "cherry",</span><span class="tag-line op-add-1">    "grape",</span><span class="tag-line op-add-2">    "kiwi",</span><span class="tag-line op-static">  ]</span><span class="tag-line op-static">}</span>
+        <span class="anim-label">recorder</span>
+        <span class="tag-line op-static">event loop inputs:</span>
+        <span class="tag-line op-add-1">  click  button#inc  {x:140}</span>
+        <span class="tag-line op-text">  random  Math.random()  0.729</span>
+        <span class="tag-line op-add-2">  clock  Date.now()  17123...</span>
+        <span class="tag-line op-remove-1">  timer  seq:3  fired  +1000ms</span>
+        <span class="tag-line op-remove-2">  fetch  /api/data  200  {...}</span>
       </div>
       <div class="anim-particles">
-        <div class="particle p-remove-1"></div>
-        <div class="particle p-remove-1"></div>
-        <div class="particle p-remove-1"></div>
-        <div class="particle p-text"></div>
-        <div class="particle p-text"></div>
-        <div class="particle p-text"></div>
         <div class="particle p-add-1"></div>
         <div class="particle p-add-1"></div>
         <div class="particle p-add-1"></div>
-        <div class="particle p-remove-2"></div>
-        <div class="particle p-remove-2"></div>
-        <div class="particle p-remove-2"></div>
+        <div class="particle p-text"></div>
+        <div class="particle p-text"></div>
+        <div class="particle p-text"></div>
         <div class="particle p-add-2"></div>
         <div class="particle p-add-2"></div>
         <div class="particle p-add-2"></div>
-        <div class="particle p-rm-kiwi"></div>
-        <div class="particle p-rm-kiwi"></div>
-        <div class="particle p-rm-kiwi"></div>
+        <div class="particle p-remove-1"></div>
+        <div class="particle p-remove-1"></div>
+        <div class="particle p-remove-1"></div>
+        <div class="particle p-remove-2"></div>
+        <div class="particle p-remove-2"></div>
+        <div class="particle p-remove-2"></div>
         <div class="particle p-re-cherry"></div>
         <div class="particle p-re-cherry"></div>
         <div class="particle p-re-cherry"></div>
@@ -803,12 +806,21 @@
         <div class="particle p-text-rev"></div>
         <div class="particle p-text-rev"></div>
         <div class="particle p-text-rev"></div>
+        <div class="particle p-rm-kiwi"></div>
+        <div class="particle p-rm-kiwi"></div>
+        <div class="particle p-rm-kiwi"></div>
         <div class="particle p-re-banana"></div>
         <div class="particle p-re-banana"></div>
         <div class="particle p-re-banana"></div>
       </div>
       <div class="anim-pane anim-mirror">
-        <span class="anim-label">mirror</span><span class="tag-line op-static">state = {</span><span class="tag-line op-static">  todos: [</span><span class="tag-line op-text">    "<span class="text-before">apple</span><span class="text-after">apples</span>",</span><span class="tag-line op-remove-1">    "banana",</span><span class="tag-line op-remove-2">    "cherry",</span><span class="tag-line op-add-1">    "grape",</span><span class="tag-line op-add-2">    "kiwi",</span><span class="tag-line op-static">  ]</span><span class="tag-line op-static">}</span>
+        <span class="anim-label">player</span>
+        <span class="tag-line op-static">replayed inputs:</span>
+        <span class="tag-line op-add-1">  dispatchEvent("click")</span>
+        <span class="tag-line op-text">  Math.random() → 0.729</span>
+        <span class="tag-line op-add-2">  Date.now() → 17123...</span>
+        <span class="tag-line op-remove-1">  fire callback seq:3</span>
+        <span class="tag-line op-remove-2">  resolve fetch → {200,...}</span>
       </div>
     </div>
   </section>
@@ -911,60 +923,51 @@ transport.onMessage = (ops) =&gt; {
     </div>
   </section>
 
-  <!-- Performance -->
-  <section id="performance">
-    <h2>Per<span>formance</span></h2>
+  <!-- Architecture -->
+  <section id="architecture">
+    <h2>Archi<span>tecture</span></h2>
     <p class="section-desc">
-      Headless benchmark on Node 24: 250 rigid bodies, 4 field updates
-      per body per frame, full <code>JSON.stringify</code> →
-      <code>JSON.parse</code> → <code>applyOps</code> round-trip.
-      Zero desync across 600 frames.
+      The formal model is a <strong>replicated state machine</strong>: every
+      replica runs the same code and processes the same inputs in the same
+      order. The JS event loop's run-to-completion semantics make each task
+      an atomic unit — the natural "op."
     </p>
 
-    <div class="stats-grid">
-      <div class="stat"><div class="label">ops / sec</div><div class="value">~990 K</div></div>
-      <div class="stat"><div class="label">frame rate cap</div><div class="value">~989 fps</div></div>
-      <div class="stat"><div class="label">wire bytes / sec</div><div class="value">67 MB/s</div></div>
-      <div class="stat"><div class="label">bytes / op</div><div class="value">~70</div></div>
+    <div class="code-block">
+      <div class="code-header">the replication model</div>
+      <pre><span class="cmt">                recorder                           player</span>
+<span class="cmt">          ┌──────────────────┐               ┌──────────────────┐</span>
+<span class="cmt"> browser  │  patches:        │               │  replays:        │</span>
+<span class="cmt"> inputs   │  addEventListener │               │  dispatchEvent   │</span>
+<span class="cmt">  ──────► │  setTimeout      │ ── ops[] ───► │  seed random     │</span>
+<span class="cmt">          │  fetch           │  (transport)  │  align clock     │</span>
+<span class="cmt">          │  Math.random     │               │  inject response │</span>
+<span class="cmt">          │  Date.now        │               │  fire callback   │</span>
+<span class="cmt">          └──────────────────┘               └──────────────────┘</span></pre>
     </div>
+
+    <p class="section-desc" style="margin-top: 1rem;">
+      <strong>remdom</strong> reifies the output surface (DOM mutations).
+      <strong>remjs</strong> reifies the input surface (event loop tasks).
+      Together: full round-trip replication.
+    </p>
   </section>
 
-  <!-- Protocol -->
-  <section id="protocol">
-    <h2>The <span>protocol</span></h2>
+  <!-- Wire format -->
+  <section id="wire">
+    <h2>Wire <span>format</span></h2>
     <p class="section-desc">
-      JSON over the wire. Paths are arrays of string keys. Values that
-      JSON can't express — <code>undefined</code>, <code>NaN</code>,
-      <code>Date</code>, <code>BigInt</code>, <code>Map</code>,
-      <code>Set</code>, <code>RegExp</code> — are tagged with a reserved
-      <code>__remjs</code> key at encode time and restored on decode.
+      Plain JSON. No tagged values, no special encoding. Each op is one
+      event loop input.
     </p>
 
     <div class="code-block">
       <div class="code-header">example op stream</div>
-      <pre>{ <span class="str">"type"</span>: <span class="str">"set"</span>,    <span class="str">"path"</span>: [<span class="str">"count"</span>],        <span class="str">"value"</span>: <span class="num">1</span> }
-{ <span class="str">"type"</span>: <span class="str">"set"</span>,    <span class="str">"path"</span>: [<span class="str">"user"</span>, <span class="str">"name"</span>], <span class="str">"value"</span>: <span class="str">"Bob"</span> }
-{ <span class="str">"type"</span>: <span class="str">"delete"</span>, <span class="str">"path"</span>: [<span class="str">"todos"</span>, <span class="str">"0"</span>] }
-{ <span class="str">"type"</span>: <span class="str">"mapSet"</span>, <span class="str">"path"</span>: [<span class="str">"cache"</span>], <span class="str">"key"</span>: <span class="str">"k"</span>, <span class="str">"value"</span>: <span class="num">42</span> }
-{ <span class="str">"type"</span>: <span class="str">"snapshot"</span>, <span class="str">"value"</span>: { <span class="cmt">/* full tree */</span> } }</pre>
-    </div>
-
-    <div class="protocol-ops">
-      <div class="op-group">
-        <h3 style="color: var(--green)">Object / array</h3>
-        <ul>
-          <li><code>snapshot</code> &mdash; full tree serialization</li>
-          <li><code>set</code> &mdash; property write at path</li>
-          <li><code>delete</code> &mdash; property delete at path</li>
-        </ul>
-      </div>
-      <div class="op-group">
-        <h3 style="color: var(--purple)">Map / Set</h3>
-        <ul>
-          <li><code>mapSet</code> / <code>mapDelete</code> / <code>mapClear</code></li>
-          <li><code>setAdd</code> / <code>setDelete</code> / <code>setClear</code></li>
-        </ul>
-      </div>
+      <pre>{ <span class="str">"type"</span>: <span class="str">"event"</span>,   <span class="str">"eventType"</span>: <span class="str">"click"</span>, <span class="str">"targetPath"</span>: <span class="str">"button#inc"</span>, <span class="str">"detail"</span>: {<span class="str">"clientX"</span>:<span class="num">140</span>} }
+{ <span class="str">"type"</span>: <span class="str">"random"</span>,  <span class="str">"source"</span>: <span class="str">"math"</span>, <span class="str">"values"</span>: [<span class="num">0.7291</span>] }
+{ <span class="str">"type"</span>: <span class="str">"clock"</span>,   <span class="str">"source"</span>: <span class="str">"dateNow"</span>, <span class="str">"value"</span>: <span class="num">1712345678000</span> }
+{ <span class="str">"type"</span>: <span class="str">"timer"</span>,   <span class="str">"kind"</span>: <span class="str">"timeout"</span>, <span class="str">"seq"</span>: <span class="num">3</span>, <span class="str">"scheduledDelay"</span>: <span class="num">1000</span> }
+{ <span class="str">"type"</span>: <span class="str">"network"</span>, <span class="str">"kind"</span>: <span class="str">"fetch"</span>, <span class="str">"url"</span>: <span class="str">"/api"</span>, <span class="str">"status"</span>: <span class="num">200</span>, <span class="str">"body"</span>: <span class="str">"{...}"</span> }</pre>
     </div>
   </section>
 
@@ -972,8 +975,7 @@ transport.onMessage = (ops) =&gt; {
   <section id="scope">
     <h2>Non-<span>goals</span></h2>
     <p class="section-desc">
-      remjs deliberately doesn't do these. If you need them, add a layer
-      above:
+      remjs defines the op protocol. These are implementation concerns:
     </p>
     <div class="feature-grid">
       <div class="feature">
@@ -982,15 +984,15 @@ transport.onMessage = (ops) =&gt; {
       </div>
       <div class="feature">
         <h3><span class="dot no"></span>Conflict resolution</h3>
-        <p>Ops apply in order. Multi-writer needs a CRDT or OT layer.</p>
+        <p>Ops apply in order. Multi-writer needs a coordination layer.</p>
       </div>
       <div class="feature">
-        <h3><span class="dot no"></span>Schema enforcement</h3>
-        <p>The receiver trusts the op stream.</p>
+        <h3><span class="dot no"></span>Interception scope</h3>
+        <p>Global patches or scoped hooks — your call.</p>
       </div>
       <div class="feature">
-        <h3><span class="dot no"></span>Closure capture</h3>
-        <p>Use a source transform for locals and closures.</p>
+        <h3><span class="dot no"></span>Framework integration</h3>
+        <p>Operates below all frameworks. No React/Vue/Svelte plugins.</p>
       </div>
     </div>
   </section>
