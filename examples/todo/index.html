@@ -3,7 +3,6 @@
   <head>
     <meta charset="utf-8" />
     <title>remjs — collaborative todo</title>
-    <link rel="stylesheet" href="/_shared/inspector.css" />
     <style>
       .left {
         font-family: system-ui, sans-serif;
@@ -58,7 +57,7 @@
     <div class="split">
     <div class="left">
     <h1>remjs todos</h1>
-    <p class="hint">Shared across all open tabs. State streamed over WebSocket.</p>
+    <p class="hint">Shared across all open tabs. Events replayed via WebSocket.</p>
     <form id="add-form">
       <input type="text" id="add-input" placeholder="What needs doing?" autofocus />
       <button type="submit">Add</button>
@@ -72,7 +71,6 @@
     <div class="stats" id="stats"></div>
     </div><!-- /.left -->
 
-    <div class="right" id="inspector"></div>
     </div><!-- /.split -->
 
     <script type="module" src="./client.js"></script>

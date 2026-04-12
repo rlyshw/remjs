@@ -21,14 +21,17 @@ const DIST = path.join(ROOT, "dist");
 
 /** Order matters: each file can only refer to identifiers from earlier files. */
 const SOURCES = [
-  "proxy-symbol.js",
   "ops.js",
-  "registry.js",
   "codec.js",
-  "proxy.js",
-  "apply.js",
-  "observer.js",
-  "stream.js",
+  "patches/clock.js",
+  "patches/random.js",
+  "patches/timers.js",
+  "patches/network.js",
+  "patches/storage.js",
+  "target.js",
+  "patches/events.js",
+  "recorder.js",
+  "player.js",
 ];
 
 /** Strip ESM import statements and `export` keywords so declarations live in
@@ -54,22 +57,10 @@ async function buildBundle() {
   // Expose the public surface on `window.remjs`.
   parts.push(`
 window.remjs = {
-  // v0.2 primary API
-  createObserver,
-  createObjectRegistry,
-  // Receiver
-  applyOp,
-  applyOps,
-  createReceiver,
-  // Codec
-  encode,
-  encodeContents,
-  decode,
-  // v0.1 compatibility shim
-  createStateStream,
-  // Op helpers
-  normalizeLegacyOp,
-  TAG,
+  // v0.3 event loop replication API
+  createRecorder,
+  createPlayer,
+  jsonCodec,
 };
 `);
   return `(function(){\n"use strict";\n${parts.join("\n")}\n})();`;

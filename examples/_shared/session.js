@@ -1,27 +1,19 @@
 /**
- * Shared WebSocket session helper.
+ * Shared WebSocket session helper — v0.3 event loop replication.
  *
- * Wraps a state object with `createObserver` on the server. New clients
- * receive a snapshot on connect, and any server-side mutations are fanned
- * out. Clients can also push ops back — those go through `applyOps`
- * with the observer's own registry, which mutates the underlying raw
- * objects directly (bypassing the proxy traps so we don't echo).
+ * The server acts as a relay: it receives event ops from one client
+ * and broadcasts them to all other clients. Each client runs the
+ * same app code and replays received events to stay in sync.
+ *
+ * Optionally, the server can also be a "leader" that generates
+ * events (e.g. timer-driven state updates in the dashboard demo).
  */
 
 import { WebSocketServer } from "ws";
-import { createObserver, applyOps } from "../../dist/index.js";
 
-export function createSession(rawState, server) {
+export function createSession(server) {
   const subscribers = new Set();
-
-  const observer = createObserver({
-    onOps: (ops) => broadcast({ type: "ops", ops }),
-    batchMode: "microtask",
-  });
-  // Tracking returns a proxy that emits ops on mutation. Server code that
-  // mutates state should go through this `state`, not the raw object,
-  // so its mutations are captured.
-  const state = observer.track(rawState);
+  let opLog = [];  // accumulated ops for late joiners
 
   function broadcast(msg, except = null) {
     const payload = JSON.stringify(msg);
@@ -33,8 +25,11 @@ export function createSession(rawState, server) {
   const wss = new WebSocketServer({ server });
   wss.on("connection", (ws) => {
     subscribers.add(ws);
-    observer.flush();
-    ws.send(JSON.stringify({ type: "snapshot", op: observer.snapshot() }));
+
+    // Send accumulated op history so late joiners can replay
+    if (opLog.length > 0) {
+      ws.send(JSON.stringify({ type: "ops", ops: opLog }));
+    }
 
     ws.on("message", (data) => {
       let msg;
@@ -44,10 +39,8 @@ export function createSession(rawState, server) {
         return;
       }
       if (msg.type === "ops" && Array.isArray(msg.ops)) {
-        // Apply via the observer's registry. Ops mutate the raw objects
-        // directly (no proxy traps fire), so the client's mutation
-        // doesn't echo back through the observer's onOps.
-        applyOps(null, msg.ops, observer.registry);
+        // Store and relay to all OTHER clients
+        opLog.push(...msg.ops);
         broadcast({ type: "ops", ops: msg.ops }, ws);
       }
     });
@@ -56,10 +49,16 @@ export function createSession(rawState, server) {
   });
 
   return {
-    state,
-    raw: rawState,
     broadcast,
     subscribers,
-    observer,
+    /** Push server-generated ops to all clients and the log. */
+    emit(ops) {
+      opLog.push(...ops);
+      broadcast({ type: "ops", ops });
+    },
+    /** Reset the op log (e.g. on state reset). */
+    reset() {
+      opLog = [];
+    },
   };
 }

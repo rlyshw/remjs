@@ -1,7 +1,4 @@
 import { connect } from "/_shared/client.js";
-import { createInspector } from "/_shared/inspector.js";
-
-const inspector = createInspector(document.getElementById("inspector"));
 
 const $cpu = document.getElementById("cpu");
 const $mem = document.getElementById("memory");
@@ -12,6 +9,62 @@ const $events = document.getElementById("events");
 const $meta = document.getElementById("meta");
 const $spark = document.getElementById("spark");
 const ctx = $spark.getContext("2d");
+
+/* ── App state (local, identical on every tab via event replay) ── */
+
+const state = {
+  startedAt: Date.now(),
+  tick: 0,
+  metrics: { cpu: 50, memory: 40, requestsPerSec: 200, errors: 0 },
+  history: [],
+  services: {
+    api: { status: "healthy", latencyMs: 20 },
+    db: { status: "healthy", latencyMs: 5 },
+    cache: { status: "healthy", latencyMs: 1 },
+  },
+  events: [],
+};
+
+const STATUSES = ["healthy", "degraded", "down"];
+
+function randomWalk(value, min, max, step) {
+  const next = value + (Math.random() - 0.5) * step * 2;
+  return Math.max(min, Math.min(max, next));
+}
+
+/* ── Simulation loop (runs on every tab, deterministic via replay) ── */
+
+setInterval(() => {
+  state.tick++;
+  state.metrics.cpu = Math.round(randomWalk(state.metrics.cpu, 10, 95, 8));
+  state.metrics.memory = Math.round(randomWalk(state.metrics.memory, 20, 85, 4));
+  state.metrics.requestsPerSec = Math.round(
+    randomWalk(state.metrics.requestsPerSec, 50, 500, 40),
+  );
+
+  state.history.push(state.metrics.cpu);
+  if (state.history.length > 60) state.history.shift();
+
+  if (Math.random() < 0.04) {
+    const names = Object.keys(state.services);
+    const name = names[Math.floor(Math.random() * names.length)];
+    const prev = state.services[name].status;
+    const next = STATUSES[Math.floor(Math.random() * STATUSES.length)];
+    state.services[name].status = next;
+    state.services[name].latencyMs = Math.round(
+      5 + Math.random() * (next === "healthy" ? 25 : 500),
+    );
+    if (prev !== next) {
+      state.events.push({ t: Date.now(), msg: `${name}: ${prev} → ${next}` });
+      if (next !== "healthy") state.metrics.errors++;
+      if (state.events.length > 20) state.events.shift();
+    }
+  }
+
+  render();
+}, 1500);
+
+/* ── Render ──────────────────────────────────────────────────── */
 
 function fmtTime(t) {
   return new Date(t).toISOString().slice(11, 19);
@@ -36,7 +89,7 @@ function drawSpark(history) {
   ctx.stroke();
 }
 
-function render(state) {
+function render() {
   $cpu.innerHTML = `${state.metrics.cpu}<span class="unit">%</span>`;
   $mem.innerHTML = `${state.metrics.memory}<span class="unit">%</span>`;
   $rps.textContent = state.metrics.requestsPerSec;
@@ -64,7 +117,15 @@ function render(state) {
   $meta.textContent = `tick ${state.tick} · uptime ${uptime}s`;
 }
 
+/* ── Connect: recorder captures timer/random/clock, player replays ── */
+
 connect({
-  onChange: render,
-  onMessage: (msg) => inspector.onMessage(msg),
+  onOps: () => render(),
+  recorderOptions: {
+    events: false,   // no DOM events needed
+    network: false,
+    storage: false,
+  },
 });
+
+render();
