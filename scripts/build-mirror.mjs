@@ -176,18 +176,23 @@ function applyOne(){
 function drainTemporal(){
   if(!pend.length){draining=false;return;}
   draining=true;
-  var base=pend[0].ts||0;
-  for(var i=0;i<pend.length;i++){
-    var delay=(pend[i].ts||0)-base;
-    (function(idx){
+  // Snapshot the queue — don't reference pend by index during async drain
+  var batch=pend.slice();
+  pend=[];
+  var base=batch[0].ts||0;
+  var applied=0;
+  for(var i=0;i<batch.length;i++){
+    var delay=(batch[i].ts||0)-base;
+    (function(op){
       var t=setTimeout(function(){
-        var o=pend[idx];
-        if(o.type==="frame")mirrorFrame=o;
-        ac++;var r=document.getElementById("o"+ac);if(r)r.className="orow done";upd();
-        if(idx===pend.length-1){pend=[];draining=false;upd();}
+        if(op.type==="frame")mirrorFrame=op;
+        ac++;var r=document.getElementById("o"+ac);if(r)r.className="orow done";
+        applied++;
+        if(applied===batch.length)draining=false;
+        upd();
       },delay);
       drainTimers.push(t);
-    })(i);
+    })(batch[i]);
   }
 }
 function cancelDrain(){for(var t of drainTimers)clearTimeout(t);drainTimers=[];draining=false;}
