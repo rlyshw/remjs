@@ -197,23 +197,39 @@ function buildEmbedPage(bundle) {
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>remjs embed</title>
 <style>
-:root{color-scheme:dark}*{box-sizing:border-box;margin:0;padding:0}
+:root{color-scheme:dark;--m:ui-monospace,'SF Mono',monospace}
+*{box-sizing:border-box;margin:0;padding:0}
 body{background:#0d1117;overflow:hidden;font-family:system-ui,sans-serif;color:#e6edf3}
-.p{display:flex;gap:2px;height:100vh}
-.pn{flex:1;position:relative;overflow:hidden}
+.ly{display:grid;grid-template-columns:1fr 180px 1fr;height:100vh;gap:2px}
+.pn{position:relative;overflow:hidden;min-height:0}
 .lb{position:absolute;top:3px;left:6px;z-index:1;font-size:.5em;text-transform:uppercase;letter-spacing:.06em;font-weight:700;pointer-events:none;opacity:.8}
 .s .lb{color:#58a6ff}.m .lb{color:#bc8cff}
 canvas{display:block;width:100%;height:100%;cursor:crosshair;background:#06080d}
-.ig{position:absolute;bottom:5px;right:8px;font-size:.5em;font-weight:700;font-family:ui-monospace,monospace}
-.ig.ok{color:#3fb950}.ig.bad{color:#f85149}
-.hn{position:absolute;bottom:5px;left:0;right:0;text-align:center;color:#8b949e;font-size:.5em;pointer-events:none;opacity:.7}
+.opp{display:flex;flex-direction:column;background:#161b22;border-left:1px solid #30363d;border-right:1px solid #30363d;min-height:0}
+.oph{padding:3px 6px;border-bottom:1px solid #30363d;font-size:.5em;text-transform:uppercase;letter-spacing:.06em;color:#8b949e;background:#0d1117;display:flex;justify-content:space-between;align-items:center}
+.oph .t{font-weight:700;color:#e6edf3}
+.opc{display:flex;gap:2px}
+.opc button{background:#21262d;border:1px solid #30363d;color:#e6edf3;border-radius:3px;padding:0 5px;font-size:1em;cursor:pointer;font-family:var(--m);line-height:1.4}
+.opc button:hover{background:#30363d}.opc button.on{background:#1f6feb;border-color:#58a6ff}
+.olog{flex:1;overflow-y:auto;font-family:var(--m);font-size:.5rem;line-height:1.4;padding:0;min-height:0}
+.orow{padding:1px 6px;border-bottom:1px solid rgba(48,54,61,.3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.orow.pend{opacity:.35}.orow.done{opacity:1}
+.ot{display:inline-block;min-width:3.5em;font-weight:600}
+.ot.launch{color:#f0c040}.ot.random{color:#bc8cff}
+.opf{padding:2px 6px;border-top:1px solid #30363d;font-family:var(--m);font-size:.45rem;color:#8b949e;display:flex;justify-content:space-between;background:#0d1117}
+.ig{font-weight:700}.ig.ok{color:#3fb950}.ig.bad{color:#f85149}
+@media(max-width:600px){.ly{grid-template-columns:1fr;grid-template-rows:1fr 120px 1fr;height:100vh}
+  .opp{border-left:0;border-right:0;border-top:1px solid #30363d;border-bottom:1px solid #30363d}}
 </style></head><body>
-<div class="p">
+<div class="ly">
 <div class="pn s"><span class="lb">source</span><canvas id="S" width="520" height="400"></canvas></div>
+<div class="opp">
+<div class="oph"><span class="t">ops</span><div class="opc"><button id="pp">||</button><button id="st">step</button></div></div>
+<div class="olog" id="ol"></div>
+<div class="opf"><span id="qc">0</span> queued<span class="ig ok" id="ig">in sync</span></div>
+</div>
 <div class="pn m"><span class="lb">follower</span><canvas id="M" width="520" height="400"></canvas></div>
 </div>
-<span class="hn" id="hn">click left canvas to launch</span>
-<span class="ig ok" id="ig">in sync</span>
 <script>${bundle}<\/script>
 <script>
 (function(){
@@ -247,18 +263,38 @@ function dr(cx,g,src){cx.fillStyle="#06080d";cx.fillRect(0,0,W,H);var i,z,p;
   for(i=0;i<g.pk.length;i++){p=g.pk[i];cx.fillStyle=p.cl;cx.globalAlpha=p.st?.9:1;cx.beginPath();cx.arc(p.x,p.y,PR,0,Math.PI*2);cx.fill();
     cx.globalAlpha=1;cx.fillStyle="#fff";cx.font="bold 10px sans-serif";cx.textAlign="center";cx.textBaseline="middle";cx.fillText(String(p.id),p.x,p.y)}
   cx.fillStyle=src?"#58a6ff":"#bc8cff";cx.font="bold 16px sans-serif";cx.textAlign="right";cx.textBaseline="top";cx.fillText(String(g.sc()),W-6,4)}
+
 var S=mk(),M=mk(),sc=document.getElementById("S").getContext("2d"),mc=document.getElementById("M").getContext("2d");
-var $ig=document.getElementById("ig"),$hn=document.getElementById("hn"),oq=[];
+var $ol=document.getElementById("ol"),$qc=document.getElementById("qc"),$ig=document.getElementById("ig"),$pp=document.getElementById("pp");
+var ops=[],pend=[],ac=0,paused=false;
+
+function addOp(o){ops.push(o);pend.push(o);
+  var r=document.createElement("div");r.className="orow pend";
+  var tc=o.type==="launch"?"launch":"random";
+  r.innerHTML='<span class="ot '+tc+'">'+o.type+'</span> '+(o.type==="launch"?"x:"+Math.round(o.x)+" y:"+Math.round(o.y):"hue:"+o.value);
+  r.id="o"+ops.length;$ol.appendChild(r);$ol.scrollTop=$ol.scrollHeight;upd()}
+function applyOne(){if(!pend.length)return;var o=pend.shift();if(o.type==="launch")M.launch(o.x,o.y,o.hue);
+  ac++;var r=document.getElementById("o"+ac);if(r)r.className="orow done";upd()}
+function applyAll(){while(pend.length)applyOne()}
+function upd(){$qc.textContent=pend.length}
+
+$pp.onclick=function(){paused=!paused;$pp.textContent=paused?"play":"||";$pp.classList.toggle("on",paused)};
+document.getElementById("st").onclick=function(){if(!paused){paused=true;$pp.textContent="play";$pp.classList.add("on")}applyOne()};
+
 var cv=document.getElementById("S"),dg=null;
 function xy(e){var r=cv.getBoundingClientRect();return{x:(e.clientX-r.left)/r.width*W,y:(e.clientY-r.top)/r.height*H}}
 cv.addEventListener("pointerdown",function(e){dg=xy(e);cv.setPointerCapture(e.pointerId)});
 cv.addEventListener("pointermove",function(e){if(dg)dg=xy(e)});
 cv.addEventListener("pointerup",function(){if(!dg)return;var a=dg;dg=null;var h=Math.floor(Math.random()*360);
-  S.launch(a.x,a.y,h);oq.push({x:a.x,y:a.y,h:h});$hn.style.opacity="0"});
+  S.launch(a.x,a.y,h);addOp({type:"random",value:h});addOp({type:"launch",x:a.x,y:a.y,hue:h})});
 cv.addEventListener("pointercancel",function(){dg=null});
-function loop(){S.step();for(var o of oq)M.launch(o.x,o.y,o.h);oq=[];M.step();dr(sc,S,true);dr(mc,M,false);
-  var ok=S.pk.length===M.pk.length;if(ok)for(var i=0;i<S.pk.length;i++){var a=S.pk[i],b=M.pk[i];if(Math.abs(a.x-b.x)>.01||Math.abs(a.y-b.y)>.01){ok=false;break}}
-  $ig.className="ig "+(ok?"ok":"bad");$ig.textContent=ok?"in sync":"DESYNC";requestAnimationFrame(loop)}
+
+function loop(){S.step();if(!paused)applyAll();M.step();dr(sc,S,true);dr(mc,M,false);
+  var ok=S.pk.length===M.pk.length;
+  if(ok)for(var i=0;i<S.pk.length;i++){var a=S.pk[i],b=M.pk[i];if(Math.abs(a.x-b.x)>.01||Math.abs(a.y-b.y)>.01){ok=false;break}}
+  if(pend.length)ok=false;
+  $ig.className="ig "+(ok?"ok":"bad");$ig.textContent=ok?"in sync":pend.length?"behind":"DESYNC";
+  requestAnimationFrame(loop)}
 requestAnimationFrame(loop);
 })();
 <\/script></body></html>`;
