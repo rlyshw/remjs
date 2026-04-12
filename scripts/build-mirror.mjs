@@ -81,6 +81,32 @@ const GAME_PAGE = (bundle) => `<!doctype html>
   var isFollower = (window.location.hash === "#follower") || window.__remjs_follower;
   var { createRecorder, createPlayer, jsonCodec } = window.remjs;
 
+  /* ── v0.3 setup FIRST — patches globals before game registers handlers ── */
+  if (isFollower) {
+    var player = createPlayer();
+    window.addEventListener("message", function(ev) {
+      if (ev.data && ev.data.type === "remjs-ops") {
+        player.apply(ev.data.ops);
+      }
+    });
+  } else {
+    var recorder = createRecorder({
+      onOps: function(ops) {
+        if (window.parent !== window) {
+          window.parent.postMessage({ type: "remjs-source-ops", ops: ops }, "*");
+        }
+      },
+      batchMode: "sync",
+      events: true,
+      timers: false,
+      random: true,
+      clock: true,
+      network: false,
+      storage: false,
+    });
+    recorder.start();
+  }
+
   var canvas = document.getElementById("canvas");
   var ctx = canvas.getContext("2d");
 
@@ -233,36 +259,6 @@ const GAME_PAGE = (bundle) => `<!doctype html>
     step();
     draw();
     requestAnimationFrame(loop);
-  }
-
-  /* ── v0.3 event loop replication ──────────────────────── */
-  if (isFollower) {
-    // Follower: install player, receive ops from parent via postMessage
-    var player = createPlayer();
-    window.addEventListener("message", function(ev) {
-      if (ev.data && ev.data.type === "remjs-ops") {
-        player.apply(ev.data.ops);
-      }
-    });
-  } else {
-    // Source: install recorder, send ops UP to parent who relays to mirror
-    var recorder = createRecorder({
-      onOps: function(ops) {
-        // Post to parent (the mirror/embed page relays to the follower iframe)
-        if (window.parent !== window) {
-          window.parent.postMessage({ type: "remjs-source-ops", ops: ops }, "*");
-        }
-      },
-      batchMode: "sync",
-      events: true,
-      timers: true,
-      random: true,
-      clock: true,
-      network: false,
-      storage: false,
-    });
-
-    recorder.start();
   }
 
   requestAnimationFrame(loop);
