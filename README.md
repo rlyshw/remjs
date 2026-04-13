@@ -1,5 +1,7 @@
 # remjs
 
+**v0.3.1** · [changelog](./CHANGELOG.md)
+
 Event loop replication for JavaScript. Capture event loop inputs as structured ops, replay them on any runtime for identical execution.
 
 ```
@@ -84,11 +86,32 @@ interface Recorder {
 Replays recorded ops into the event loop.
 
 ```typescript
+interface PlayerOptions {
+  mode?: "temporal" | "instant";   // default "temporal"
+  events?: boolean;
+  timers?: boolean;
+  network?: boolean;
+  random?: boolean;
+  clock?: boolean;
+  storage?: boolean;
+}
+
+interface ApplyOptions {
+  mode?: "temporal" | "instant";   // override the default for this call
+}
+
 interface Player {
-  apply(ops: readonly Op[]): void;   // replay ops
-  destroy(): void;                    // restore patched globals
+  apply(ops: readonly Op[], options?: ApplyOptions): void;
+  destroy(): void;                  // restore patched globals
 }
 ```
+
+**Temporal vs instant.** `temporal` (default) replays ops at their
+original cadence using the `ts` field on each op. `instant` applies
+immediately — useful for catching up a late-joining peer. The per-apply
+override lets a single player do both: snap up to current state with
+`apply(historyOps, { mode: "instant" })`, then take live ops at natural
+tempo with the default.
 
 ### `jsonCodec: Codec`
 

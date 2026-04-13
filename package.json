@@ -1,6 +1,6 @@
 {
   "name": "remjs",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Event loop replication — serialize JS program execution as structured ops",
   "type": "module",
   "main": "dist/index.js",
@@ -12,8 +12,9 @@
     }
   },
   "scripts": {
-    "build": "tsc && node scripts/build-mirror.mjs",
+    "build": "tsc && node scripts/build-mirror.mjs && node scripts/build-demos.mjs",
     "build:mirror": "node scripts/build-mirror.mjs",
+    "build:demos": "node scripts/build-demos.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "example:todo": "node examples/todo/server.js",

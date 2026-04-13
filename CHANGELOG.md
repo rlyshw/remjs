@@ -1,5 +1,94 @@
 # Changelog
 
+## 0.3.1 — event patching hardening
+
+Round of recorder/player fixes surfaced by driving real apps through
+remjs-proxy (TodoMVC, Hacker News, counter demos). All backwards-compatible.
+
+### Added
+
+- **`ApplyOptions` on `player.apply()`** — pass `{ mode: "instant" | "temporal" }`
+  as a second arg to override the player's default mode for a single call.
+  Enables late-joiner flow: `player.apply(historyOps, { mode: "instant" })`
+  to snap up to current state, then default `apply(liveOps)` for temporal
+  pacing. (#4)
+- **`scrollTopPct` / `scrollLeftPct` on scroll event detail** — recorder now
+  emits scroll position as a fraction of scrollable range in addition to
+  absolute pixels. Player prefers the percentage form when present, falling
+  back to pixels — so two peers with different viewport sizes land at the
+  same logical position (e.g. "50% down"). (#13)
+
+### Fixed
+
+- **IDL on-event handlers (`el.onclick = fn`) are now captured.** The
+  recorder shims `on*` property setters on `HTMLElement`, `Document`, and
+  `Window` prototypes to route through `addEventListener`, which was the
+  only path the recorder previously observed. Fixes silent event loss on
+  apps that use the single-slot IDL registration (TodoMVC, counter). (#2)
+- **Cascading events no longer double-emit or bounce.** A user click on a
+  `<label>` fires synthesized click+change events on the underlying input;
+  the recorder was capturing all three and the player was re-triggering
+  the browser's cascade on replay, producing visible flicker. Recorder
+  now tracks dispatch depth and skips events fired synchronously inside
+  another handler; a per-Event WeakSet dedupes multiple listener fires of
+  the same Event. (#3)
+- **Anchor click navigation now replays.** `dispatchEvent` on a synthetic
+  click doesn't run the browser's activation algorithm — links don't
+  navigate, buttons don't submit. Player now routes click ops on
+  `<a href>`, `<button>`, and activation-typed `<input>` through
+  `element.click()`, which does run activation (and still respects
+  `preventDefault`). (#12)
+- **Scroll events actually scroll.** Synthetic scroll events are
+  notifications only and don't move the viewport. Player now sets
+  `scrollTop` / `scrollLeft` on the target before dispatching so
+  handlers see the new position. (#13)
+
+## 0.3.0 — event loop replication
+
+Complete pivot from heap-state capture (v0.1/v0.2) to event loop input
+capture. Same code + same event loop inputs = identical execution. Frees
+the framework from depending on what's observable through Proxy traps,
+which broke down on React/Vue apps that manage state in internal loops
+bypassing JS scope bindings.
+
+This is a **breaking change** — the v0.2 `createObserver` / `applyOps`
+API is gone. The new API is `createRecorder` / `createPlayer`, and ops
+describe event loop inputs rather than state mutations.
+
+### Added
+
+- **`createRecorder({ onOps, batchMode?, events?, timers?, network?,
+  random?, clock?, storage? })`** installs monkey-patches on the event
+  loop entry points you opt into and emits ops for everything that
+  crosses them. Returns `{ start, stop, snapshot, destroy }`.
+- **`createPlayer({ mode?, events?, timers?, network?, random?, clock?,
+  storage? })`** patches the follower runtime so that recorded values
+  (random, clock, network responses, storage reads) return on demand,
+  and replays recorded events via `dispatchEvent`. Modes are `"temporal"`
+  (replay at original cadence, default) or `"instant"` (apply
+  immediately).
+- **New op types**: `event`, `timer`, `network`, `random`, `clock`,
+  `storage`, `navigation`, `snapshot`. All plain JSON, no registry, no
+  ref addressing.
+- **Per-subsystem patches** in `src/patches/`: `events.ts`, `timers.ts`,
+  `network.ts`, `random.ts`, `clock.ts`, `storage.ts`. Each is
+  independently installable.
+- **`jsonCodec`** for encoding/decoding op batches over a transport.
+
+### Removed
+
+- `createObserver`, `createReceiver`, `createStateStream`,
+  `createObjectRegistry`, all ref/path target addressing,
+  `__remjs: "ref" | "newobj"` tagged values. These belonged to the heap
+  state model and don't apply to event loop replication.
+
+### Docs
+
+- `README.md`, `docs/USAGE.md`, `docs/WIRE_FORMAT.md`, and
+  `docs/ARCHITECTURE.md` rewritten for the v0.3 event-loop-replication
+  model. The v0.2 heap-state docs (`createObserver` / `__remjs` tagged
+  values / ref-path addressing) are gone along with that API.
+
 ## 0.2.0 — `createObserver` redesign
 
 The headline change: a new primary primitive, `createObserver`, that
