@@ -99,6 +99,25 @@ describe("player", () => {
     player.destroy();
   });
 
+  it("accepts per-apply mode override", () => {
+    // Default temporal, override to instant for catch-up batch
+    const player = createPlayer({ mode: "temporal", events: false, timers: false, network: false, storage: false });
+
+    player.apply(
+      [
+        { type: "random", source: "math", values: [0.5], ts: 1000 },
+        { type: "random", source: "math", values: [0.75], ts: 5000 },
+      ],
+      { mode: "instant" },
+    );
+
+    // Under "instant" override both values land synchronously
+    expect(Math.random()).toBe(0.5);
+    expect(Math.random()).toBe(0.75);
+
+    player.destroy();
+  });
+
   it("destroy restores globals", () => {
     const origRandom = Math.random;
     const origDateNow = Date.now;

@@ -26,14 +26,19 @@ export interface PlayerOptions {
   storage?: boolean;
 }
 
+export interface ApplyOptions {
+  /** Override the player's default mode for this apply() call. */
+  mode?: ReplayMode;
+}
+
 export interface Player {
-  apply(ops: readonly Op[]): void;
+  apply(ops: readonly Op[], options?: ApplyOptions): void;
   destroy(): void;
 }
 
 export function createPlayer(options: PlayerOptions = {}): Player {
   const {
-    mode = "temporal",
+    mode: defaultMode = "temporal",
     events: enableEvents = true,
     timers: enableTimers = true,
     network: enableNetwork = true,
@@ -137,6 +142,23 @@ export function createPlayer(options: PlayerOptions = {}): Player {
         altKey: d.altKey as boolean, ctrlKey: d.ctrlKey as boolean,
         shiftKey: d.shiftKey as boolean, metaKey: d.metaKey as boolean,
       });
+    } else if (op.eventType === "scroll") {
+      // Synthetic scroll events don't move the viewport — set position first,
+      // then dispatch so listeners see the new values.
+      const el = target as Element;
+      const maxTop = el.scrollHeight - el.clientHeight;
+      const maxLeft = el.scrollWidth - el.clientWidth;
+      if (typeof d.scrollTopPct === "number") {
+        el.scrollTop = d.scrollTopPct * Math.max(0, maxTop);
+      } else if (typeof d.scrollTop === "number") {
+        el.scrollTop = d.scrollTop;
+      }
+      if (typeof d.scrollLeftPct === "number") {
+        el.scrollLeft = d.scrollLeftPct * Math.max(0, maxLeft);
+      } else if (typeof d.scrollLeft === "number") {
+        el.scrollLeft = d.scrollLeft;
+      }
+      event = new Event(op.eventType, { bubbles: true, cancelable: true });
     } else if (op.eventType === "input" || op.eventType === "change") {
       if ("value" in d && "value" in target) {
         (target as HTMLInputElement).value = d.value as string;
@@ -144,6 +166,21 @@ export function createPlayer(options: PlayerOptions = {}): Player {
       event = new Event(op.eventType, { bubbles: true, cancelable: true });
     } else {
       event = new Event(op.eventType, { bubbles: true, cancelable: true });
+    }
+
+    // Anchors and buttons require the activation algorithm (navigation,
+    // form submit) which dispatchEvent does not run — only trusted clicks
+    // or element.click() do. Route clicks on these through .click().
+    if (op.eventType === "click" && target instanceof HTMLElement) {
+      const tag = target.tagName;
+      const isActivatable =
+        (tag === "A" && (target as HTMLAnchorElement).href) ||
+        tag === "BUTTON" ||
+        (tag === "INPUT" && ["submit", "reset", "button", "image"].includes((target as HTMLInputElement).type));
+      if (isActivatable) {
+        target.click();
+        return;
+      }
     }
 
     target.dispatchEvent(event);
@@ -179,8 +216,9 @@ export function createPlayer(options: PlayerOptions = {}): Player {
     document.documentElement.innerHTML = op.html;
   }
 
-  function apply(ops: readonly Op[]): void {
+  function apply(ops: readonly Op[], options?: ApplyOptions): void {
     install();
+    const mode = options?.mode ?? defaultMode;
 
     if (mode === "instant" || ops.length === 0) {
       for (const op of ops) applyOp(op);
