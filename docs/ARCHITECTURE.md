@@ -176,11 +176,17 @@ prefers the fractional form when present.
   defaults, replay will still drift. remjs assumes the replicas run
   the same application.
 
+## Known limitations
+
+- **Pending timers and network are not reanimated on snapshot.** The
+  `SnapshotOp` carries `pendingTimers` and `pendingNetwork` lists, but
+  the player currently ignores them — a late-joining follower misses
+  any tasks the leader had in flight at snapshot time. This is
+  load-bearing for the op-stream inspector workstream (#19) and the
+  rewind feature (#15).
+
 ## Future directions
 
-- **Reanimating pending timers and network on snapshot.** The
-  `SnapshotOp` already carries `pendingTimers` and `pendingNetwork`
-  lists; the player currently ignores them.
 - **More non-determinism sources.** `crypto.randomUUID`, `IntersectionObserver`
   timing, `navigator.onLine` transitions.
 - **Op compaction.** Coalesce high-frequency scrolls / pointer moves

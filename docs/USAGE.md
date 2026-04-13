@@ -21,24 +21,9 @@ standard Web APIs.
 
 ## Quick start
 
-```ts
-import { createRecorder, createPlayer, jsonCodec } from "remjs";
-
-// ── Leader ─────────────────────────────────────────────────────
-const recorder = createRecorder({
-  onOps: (ops) => ws.send(jsonCodec.encodeBatch(ops)),
-});
-recorder.start();
-
-// ── Follower ───────────────────────────────────────────────────
-const player = createPlayer();
-ws.onmessage = (e) => player.apply(jsonCodec.decodeBatch(e.data));
-```
-
-With both sides running the same application code, the follower now
-mirrors the leader's execution: events dispatch, `Math.random()` returns
-the same values, `Date.now()` matches, `fetch` returns recorded
-responses.
+See the [README](../README.md#quick-start) for the minimal leader /
+follower snippet. The rest of this document is the full API and
+transport recipes.
 
 ## Recorder
 

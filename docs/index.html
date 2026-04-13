@@ -870,12 +870,14 @@ transport.onMessage = (ops) =&gt; {
   <section id="demo">
     <h2>Live <span>demo</span></h2>
     <p class="section-desc">
-      Shuffleboard mirror. The left court owns the state — a proxied JS
-      object with a score, a list of pucks, and a shot log. Click and drag
-      from the launcher to fire. Every mutation flows through
-      <code>JSON.stringify</code> → <code>JSON.parse</code> →
-      <code>applyOps</code> onto a plain object driving the right court.
-      Byte-for-byte identical, verified every tick.
+      Shuffleboard mirror. Same code runs in both iframes. The left court
+      is the <strong>leader</strong>: its clicks, pointer moves, timer fires,
+      and <code>Math.random</code> reads cross the event loop and are
+      captured as ops. The right court is the <strong>follower</strong>:
+      it receives the op stream, replays the events onto its own DOM, and
+      returns the leader's recorded random values to its own code. No
+      leader-to-follower state transfer — the follower recomputes state
+      from the same inputs.
     </p>
     <iframe src="mirror-embed.html" class="demo-frame" title="remjs shuffleboard mirror demo" loading="lazy"></iframe>
     <p class="demo-caption">
