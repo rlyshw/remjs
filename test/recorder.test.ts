@@ -84,6 +84,59 @@ describe("recorder", () => {
     expect(Array.isArray(snap.pendingNetwork)).toBe(true);
   });
 
+  it("task batchMode groups emits across microtask boundaries into one batch", async () => {
+    const batches: Op[][] = [];
+    const recorder = createRecorder({
+      onOps: (batch) => batches.push(batch),
+      batchMode: "task",
+      events: false, timers: false, network: false, storage: false,
+    });
+
+    recorder.start();
+
+    // Emit in the current task...
+    Math.random();
+    // ...then in a microtask chained from here.
+    await Promise.resolve();
+    Math.random();
+    // ...and a second microtask.
+    await Promise.resolve();
+    Math.random();
+
+    // Yield to the task queue so setTimeout(flush) fires.
+    await new Promise<void>((r) => setTimeout(r, 0));
+    recorder.stop();
+
+    // All three random ops landed in one batch (the current task
+    // plus its microtask drain).
+    const randomOpsPerBatch = batches.map((b) => b.filter((o) => o.type === "random").length);
+    expect(randomOpsPerBatch).toContain(3);
+  });
+
+  it("microtask batchMode splits ops across microtask-queued flushes", async () => {
+    const batches: Op[][] = [];
+    const recorder = createRecorder({
+      onOps: (batch) => batches.push(batch),
+      batchMode: "microtask",
+      events: false, timers: false, network: false, storage: false,
+    });
+
+    recorder.start();
+
+    Math.random();
+    await Promise.resolve();
+    Math.random();
+
+    await new Promise<void>((r) => setTimeout(r, 0));
+    recorder.stop();
+
+    // Under microtask batching, the flush scheduled by the first emit
+    // runs before the awaited continuation emits the second random —
+    // so the two ops land in different batches.
+    const nonEmptyBatches = batches.filter((b) => b.some((o) => o.type === "random"));
+    expect(nonEmptyBatches.length).toBeGreaterThanOrEqual(2);
+  });
+
   it("captures timer ops", async () => {
     const ops: Op[] = [];
     const recorder = createRecorder({

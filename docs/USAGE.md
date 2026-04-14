@@ -30,7 +30,7 @@ transport recipes.
 ```ts
 interface RecorderOptions {
   onOps: (ops: Op[]) => void;
-  batchMode?: "raf" | "microtask" | "sync";
+  batchMode?: "task" | "raf" | "microtask" | "sync";
   // per-subsystem toggles — each defaults to true
   events?: boolean;
   timers?: boolean;
@@ -57,11 +57,21 @@ keeps the recorder reusable (`start()` again after a `stop()` works).
 
 ### Batch modes
 
-| Mode          | When `onOps` fires                                    | Use when                              |
-| ------------- | ----------------------------------------------------- | ------------------------------------- |
-| `"microtask"` | End of the current microtask (default)                | Most cases; low latency, minimal coalescing |
-| `"raf"`       | Next animation frame                                  | UI-driven apps where per-frame grouping is natural |
-| `"sync"`      | Every emitted op flushes immediately                  | Tests, debugging                      |
+| Mode          | When `onOps` fires                                                     | Use when                                   |
+| ------------- | ---------------------------------------------------------------------- | ------------------------------------------ |
+| `"task"`      | Next event-loop task (default, via `setTimeout(fn, 0)`)                | Most cases. Required for async-handler determinism — groups a trigger and its microtask-drain continuations into one batch. |
+| `"microtask"` | End of the current microtask (lower latency, but splits async handlers) | Low-latency scenarios that only involve sync handlers; tests that need same-tick delivery. |
+| `"raf"`       | Next animation frame                                                    | UI-driven apps where per-frame grouping is natural. |
+| `"sync"`      | Every emitted op flushes immediately                                    | Tests, debugging.                           |
+
+**Why `"task"` is the default.** An `await` in a handler yields to
+the event loop. The continuation after the await runs in a separate
+microtask. Under `"microtask"` batching, the flush scheduled by the
+first emit wins the race against the continuation — so the
+continuation's oracle reads land in a *later* batch. On the follower,
+the continuation races ahead of its oracle queue and diverges.
+`"task"` batching groups everything in one task, closing the gap.
+See [`docs/ARCHITECTURE.md`](./ARCHITECTURE.md#determinism-across-the-event-loop).
 
 ### Per-subsystem toggles
 

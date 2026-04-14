@@ -83,6 +83,45 @@ describe("player", () => {
     player.destroy();
   });
 
+  it("fetch waits for NetworkOp when called before the op arrives", async () => {
+    const player = createPlayer({ mode: "instant", events: false, timers: false, random: false, clock: false, storage: false, network: true });
+    player.apply([]); // Force install so patched fetch is in place.
+
+    // Call fetch FIRST — no op is queued yet. The returned Promise
+    // must be pending until we apply the matching NetworkOp.
+    const fetchPromise = fetch("https://api.example.com/slow");
+
+    const op: NetworkOp = {
+      type: "network",
+      kind: "fetch",
+      seq: 0,
+      url: "https://api.example.com/slow",
+      method: "GET",
+      status: 200,
+      headers: { "content-type": "text/plain" },
+      body: "ok",
+    };
+
+    // Apply the op; the pending fetch should resolve.
+    player.apply([op]);
+
+    const res = await fetchPromise;
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("ok");
+
+    player.destroy();
+  });
+
+  it("destroy rejects pending fetch promises", async () => {
+    const player = createPlayer({ mode: "instant", events: false, timers: false, random: false, clock: false, storage: false, network: true });
+    player.apply([]); // Force install.
+
+    const pending = fetch("https://api.example.com/never");
+    player.destroy();
+
+    await expect(pending).rejects.toThrow(/destroyed/);
+  });
+
   it("handles multiple ops in sequence", () => {
     const player = createPlayer({ mode: "instant", events: false, timers: false, network: false, storage: false });
 

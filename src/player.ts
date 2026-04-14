@@ -47,10 +47,68 @@ export function createPlayer(options: PlayerOptions = {}): Player {
     storage: enableStorage = true,
   } = options;
 
-  // Queues for deterministic value replay
+  // Sync-oracle queues — populated by applying ops; drained by the
+  // follower's patched accessors.
   const randomQueue: number[] = [];
   const clockQueue: number[] = [];
-  const fetchQueue: Map<number, { resolve: (r: Response) => void; op: NetworkOp }> = new Map();
+
+  // Generic async-oracle protocol. An async oracle (fetch, XHR,
+  // WebSocket, future framework-specific sources) is a pair of ops:
+  // a call on the follower that wants the leader's recorded value,
+  // and an op-apply that delivers that value. Either can arrive
+  // first. The protocol parks whichever comes first and resolves
+  // on arrival of the other.
+  type Pending = { resolve: (v: unknown) => void; reject: (e: unknown) => void };
+  const pendingByKey: Map<string, Pending[]> = new Map();
+  const queuedByKey: Map<string, unknown[]> = new Map();
+
+  function asyncKey(kind: string, id: string): string {
+    return `${kind}\u0000${id}`;
+  }
+
+  function awaitAsyncOracle(kind: string, id: string): Promise<unknown> {
+    const key = asyncKey(kind, id);
+    // Op already queued? Resolve immediately.
+    const queued = queuedByKey.get(key);
+    if (queued && queued.length > 0) {
+      const value = queued.shift()!;
+      if (queued.length === 0) queuedByKey.delete(key);
+      return Promise.resolve(value);
+    }
+    // Not yet — park.
+    return new Promise<unknown>((resolve, reject) => {
+      const arr = pendingByKey.get(key) ?? [];
+      arr.push({ resolve, reject });
+      pendingByKey.set(key, arr);
+    });
+  }
+
+  function signalAsyncOracle(kind: string, id: string, value: unknown): void {
+    const key = asyncKey(kind, id);
+    // Pending waiter? Resolve the oldest.
+    const pending = pendingByKey.get(key);
+    if (pending && pending.length > 0) {
+      const p = pending.shift()!;
+      if (pending.length === 0) pendingByKey.delete(key);
+      p.resolve(value);
+      return;
+    }
+    // No waiter — queue for a future await.
+    const arr = queuedByKey.get(key) ?? [];
+    arr.push(value);
+    queuedByKey.set(key, arr);
+  }
+
+  function buildResponseFrom(op: NetworkOp): Response {
+    return new Response(op.body, {
+      status: op.status ?? 200,
+      headers: op.headers ?? {},
+    });
+  }
+
+  function fetchKey(url: string, method: string): string {
+    return `${method.toUpperCase()} ${url}`;
+  }
 
   // Temporal replay state — tracks setTimeout handles so destroy() can cancel.
   const pendingTimers: ReturnType<typeof setTimeout>[] = [];
@@ -81,18 +139,15 @@ export function createPlayer(options: PlayerOptions = {}): Player {
     }
 
     if (enableNetwork) {
-      globalThis.fetch = async function (input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-        for (const [seq, entry] of fetchQueue) {
-          const url = typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url;
-          if (entry.op.url === url) {
-            fetchQueue.delete(seq);
-            return new Response(entry.op.body, {
-              status: entry.op.status ?? 200,
-              headers: entry.op.headers ?? {},
-            });
-          }
-        }
-        return origFetch.call(globalThis, input, init);
+      // The follower's fetch waits for the leader's matching NetworkOp
+      // via the generic async-oracle protocol. No native fallback —
+      // hanging is safer than silently diverging.
+      globalThis.fetch = function (input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+        const url = typeof input === "string"
+          ? input
+          : input instanceof URL ? input.href : (input as Request).url;
+        const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+        return awaitAsyncOracle("fetch", fetchKey(url, method)) as Promise<Response>;
       } as typeof globalThis.fetch;
     }
   }
@@ -186,7 +241,8 @@ export function createPlayer(options: PlayerOptions = {}): Player {
 
   function applyNetwork(op: NetworkOp): void {
     if (!enableNetwork) return;
-    fetchQueue.set(op.seq, { resolve: () => {}, op });
+    const method = op.method ?? "GET";
+    signalAsyncOracle("fetch", fetchKey(op.url, method), buildResponseFrom(op));
   }
 
   function applyRandom(op: RandomOp): void {
@@ -294,7 +350,13 @@ export function createPlayer(options: PlayerOptions = {}): Player {
     globalThis.fetch = origFetch;
     randomQueue.length = 0;
     clockQueue.length = 0;
-    fetchQueue.clear();
+    // Reject any still-pending async-oracle waiters so their promises
+    // don't hang past teardown.
+    for (const arr of pendingByKey.values()) {
+      for (const p of arr) p.reject(new Error("remjs player destroyed"));
+    }
+    pendingByKey.clear();
+    queuedByKey.clear();
   }
 
   return { apply, destroy };

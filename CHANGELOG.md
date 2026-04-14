@@ -1,5 +1,60 @@
 # Changelog
 
+## 0.4.0 — async handler determinism
+
+0.3.2 enforced the replay invariant for synchronous handlers. Async
+handlers — those that `await` and read oracles in the continuation —
+still diverged, because the recorder's microtask-granularity flush
+fragmented one handler's ops across multiple wire batches and the
+player's `fetch` patch fell through to native when a match wasn't
+already queued.
+
+Two changes close the gap, framed against the event loop:
+
+**Recorder: batch at the next event-loop task, not the next microtask.**
+Under HTML-spec ordering, a task's microtask checkpoint drains
+exhaustively before the next task runs. Flushing via
+`setTimeout(flush, 0)` groups a trigger, its sync handler, and all
+microtask-drain continuations chained from it into one wire batch.
+
+**Player: async oracles wait on signal.** `fetch` is the first
+consumer of a generic async-oracle protocol — `awaitAsyncOracle` /
+`signalAsyncOracle` — that any async source (XHR, WebSocket, future
+framework-specific task sources) can plug into. The follower's
+`fetch` returns a Promise that resolves only when the matching
+leader-side `NetworkOp` is applied. Native fallback is gone —
+hanging is safer than silent divergence.
+
+Sync oracles (`Math.random`, `Date.now`, `localStorage.getItem`)
+keep the queue-and-pop model; task-boundary batching ensures queues
+are populated before handlers read.
+
+### Added
+
+- **`BatchMode: "task"`** — flushes at the next event-loop task
+  boundary. New default for `createRecorder`.
+- **Generic async-oracle protocol** in `src/player.ts`:
+  `awaitAsyncOracle(kind, id)` and `signalAsyncOracle(kind, id, value)`.
+  Extension point for XHR, WebSocket, and framework-added async
+  sources.
+
+### Changed
+
+- **Default `batchMode` is now `"task"`.** `"microtask"` remains
+  available as an opt-in for low-latency consumers that don't need
+  async correctness.
+- **Player `fetch` patch waits for the matching `NetworkOp`** instead
+  of falling through to native. Pending fetches are rejected by
+  `destroy()`. Closes #19.
+
+### Docs
+
+- `docs/ARCHITECTURE.md`: replaced the async known-limitation entry
+  with a "determinism across the event loop" section covering the
+  sync/async oracle split and the generic protocol.
+- `docs/USAGE.md`: documented the new default and the `"microtask"`
+  opt-in.
+
 ## 0.3.2 — replay ordering invariant (sync handlers)
 
 A remjs follower ends up in the same state as the leader iff one

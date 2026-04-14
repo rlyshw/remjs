@@ -14,7 +14,21 @@ import { installNetworkPatch } from "./patches/network.js";
 import { installStoragePatch } from "./patches/storage.js";
 import { installEventPatch } from "./patches/events.js";
 
-export type BatchMode = "raf" | "microtask" | "sync";
+/**
+ * When to flush emitted ops to `onOps`.
+ *
+ * - `"task"` (default): flush at the next event loop task boundary via
+ *   `setTimeout(fn, 0)`. All ops emitted within one task — including
+ *   those emitted during its microtask drain (await resumptions,
+ *   .then callbacks) — land in one batch. Required for deterministic
+ *   async handler replay.
+ * - `"microtask"`: flush at the next microtask. Lower latency, but
+ *   splits async handlers across batches. Correct only for sync
+ *   handlers.
+ * - `"raf"`: flush on requestAnimationFrame. For UI-paced callers.
+ * - `"sync"`: flush every emit immediately. For tests / debugging.
+ */
+export type BatchMode = "task" | "raf" | "microtask" | "sync";
 
 export interface RecorderOptions {
   onOps: (ops: Op[]) => void;
@@ -37,7 +51,7 @@ export interface Recorder {
 export function createRecorder(options: RecorderOptions): Recorder {
   const {
     onOps,
-    batchMode = "microtask",
+    batchMode = "task",
     events: enableEvents = true,
     timers: enableTimers = true,
     network: enableNetwork = true,
@@ -66,8 +80,12 @@ export function createRecorder(options: RecorderOptions): Recorder {
       flush();
     } else if (batchMode === "raf" && typeof requestAnimationFrame === "function") {
       requestAnimationFrame(flush);
-    } else {
+    } else if (batchMode === "microtask") {
       queueMicrotask(flush);
+    } else {
+      // "task" — setTimeout(fn, 0) schedules a new task per HTML spec,
+      // which runs after the current task's microtask checkpoint.
+      setTimeout(flush, 0);
     }
   };
 

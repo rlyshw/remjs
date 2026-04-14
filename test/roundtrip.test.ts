@@ -124,4 +124,56 @@ describe("end-to-end roundtrip", () => {
 
     expect(replay).toEqual(seq);
   });
+
+  it("async handler: recorder + player replicate oracles across an await fetch", async () => {
+    // Install a fake real-fetch on the leader side so the recorder's
+    // network patch has something to observe.
+    const origFetch = globalThis.fetch;
+    (globalThis as any).fetch = async (_url: string) =>
+      new Response("hello", { status: 200, headers: { "content-type": "text/plain" } });
+
+    const recorded: Op[][] = [];
+    const recorder = createRecorder({
+      onOps: (batch) => recorded.push([...batch]),
+      batchMode: "task",
+      events: false, timers: false, storage: false,
+    });
+    recorder.start();
+
+    // Simulate the leader's async handler: sync oracle, await fetch,
+    // another sync oracle.
+    const leaderA = Math.random();
+    const leaderResp = await fetch("https://api.example.com/x");
+    const leaderBody = await leaderResp.text();
+    const leaderB = Math.random();
+
+    // Let the task-boundary flush fire.
+    await new Promise<void>((r) => setTimeout(r, 0));
+    recorder.stop();
+    (globalThis as any).fetch = origFetch;
+
+    // Flatten all batches in order (preserves ts order).
+    const allOps = recorded.flat();
+
+    // Replay on the follower.
+    const player = createPlayer({
+      mode: "instant",
+      events: false, timers: false, storage: false,
+    });
+
+    // Apply all recorded batches to seed queues and populate fetch.
+    for (const batch of recorded) player.apply(batch);
+
+    const followerA = Math.random();
+    const followerResp = await fetch("https://api.example.com/x");
+    const followerBody = await followerResp.text();
+    const followerB = Math.random();
+
+    expect(followerA).toBe(leaderA);
+    expect(followerBody).toBe(leaderBody);
+    expect(followerB).toBe(leaderB);
+
+    player.destroy();
+    void allOps; // silence unused
+  });
 });

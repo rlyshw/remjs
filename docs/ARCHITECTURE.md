@@ -176,23 +176,69 @@ prefers the fractional form when present.
   defaults, replay will still drift. remjs assumes the replicas run
   the same application.
 
-## Known limitations
+## Determinism across the event loop
 
-- **Async handler continuations aren't covered by the replay invariant.**
-  When a handler `await`s and reads oracles in the continuation — e.g.
-  `await fetch(...); const r = Math.random()` — the continuation's
-  oracle reads land in a different recorder batch from the trigger
-  that resumed them. The player's in-batch reorder (0.3.2) can't move
-  ops across batches, so the follower's continuation races ahead of
-  its oracle queue and diverges. Tracked under epic #19 with the
-  design discussion of cross-batch ordering mechanisms.
+The JS event loop processes one task to completion, then drains the
+microtask queue exhaustively, then may render, then picks the next
+task. Microtasks queued during the drain run in the same drain — so
+`await` chains of arbitrary length finish before the next task.
+
+**One unit of handler causality** — everything that runs because of a
+single trigger — is one task plus its microtask drain. The recorder
+must group its emitted ops by this unit, and the player must make
+each unit's oracle reads available before the follower's handler
+reads them.
+
+### Oracles split by language semantics
+
+- **Sync oracles** (`Math.random`, `Date.now`, `localStorage.getItem`)
+  return synchronously and cannot wait. The follower needs their
+  values pre-queued before the handler runs.
+- **Async oracles** (`fetch`, and future XHR / WebSocket / framework
+  sources) return a Promise or invoke a callback later. The follower
+  can wait — returning an unresolved Promise that the player resolves
+  when the matching leader op arrives.
+
+### How remjs satisfies the invariant
+
+- **Recorder batching is task-granular** (0.4.0+). `setTimeout(flush,
+  0)` schedules the flush as a new task, so it runs after the current
+  task's microtask checkpoint completes. All ops emitted within one
+  unit of handler causality — the trigger, sync-oracle reads during
+  the sync handler, sync-oracle reads during microtask-drain
+  continuations — land in one wire batch.
+- **Player reorders within each batch** (0.3.2+). Oracles applied
+  first, triggers second. Sync-oracle queues populate before the
+  trigger dispatches.
+- **Player's async-oracle protocol** (0.4.0+). `awaitAsyncOracle(kind,
+  id)` and `signalAsyncOracle(kind, id, value)` are a small pair of
+  primitives in `player.ts`. The follower's `fetch` patch calls
+  `awaitAsyncOracle` and returns the resulting Promise;
+  `applyNetwork` calls `signalAsyncOracle` when the matching op lands.
+  New async oracle types (XHR, WebSocket, framework-specific) plug
+  into the same primitives — they just need an identifier scheme and
+  a value-builder for their op type.
+
+### What this doesn't cover
+
+- **Multiple concurrent fetches to the same URL.** The current
+  `(method, url)` key treats them as FIFO; if the leader's two calls
+  returned distinct responses, the follower pairs them in order.
+  Correct as long as both runtimes issue the calls in the same order.
+- **Sync-oracle reads on the follower that happen outside any
+  replayed handler.** If the follower's code reads `Math.random()`
+  without a trigger having fired, the queue may be empty and the
+  read falls through to native. Don't do that; keep non-deterministic
+  reads inside handlers.
+
+## Known limitations
 
 - **Pending timers and network are not reanimated on snapshot.** The
   `SnapshotOp` carries `pendingTimers` and `pendingNetwork` lists, but
   the player currently ignores them — a late-joining follower misses
-  any tasks the leader had in flight at snapshot time. This is
-  load-bearing for the op-stream inspector workstream (#19) and the
-  rewind feature (#15).
+  any tasks the leader had in flight at snapshot time. Load-bearing
+  for the op-stream inspector workstream (rewind #15; pause/step
+  #18).
 
 ## Future directions
 
