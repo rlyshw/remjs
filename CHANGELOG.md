@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.3.2 — replay ordering invariant (sync handlers)
+
+A remjs follower ends up in the same state as the leader iff one
+invariant holds: every oracle value a handler consumes must be
+queued on the follower before the trigger that runs the handler.
+Oracle reads are non-deterministic inputs the runtime pulls —
+`Math.random`, `Date.now`, `fetch` response bodies, storage gets.
+Triggers are what initiate a handler — events, timer fires, navigation.
+
+The recorder emits in observation order (trigger first, then oracles
+the handler pulls). Applied in that order, the follower's handler
+runs with empty queues and diverges. 0.3.2 enforces the invariant on
+the player side for synchronous handlers.
+
+The async case (handler awaits, oracles read in a `.then`
+continuation) remains a known limitation — continuation oracles land
+in a separate batch from the trigger that resumed them, so in-batch
+reorder cannot cover them. Tracked under epic #19.
+
+### Changed
+
+- **Player applies oracles before triggers within each batch.**
+  `player.apply()` now splits the incoming batch by class — oracles
+  (`random`, `clock`, `network`, `storage`-`get`) apply first,
+  triggers (`event`, `timer`, `navigation`, `snapshot`,
+  `storage`-`set`/`remove`) apply second. Order among oracles and
+  among triggers is preserved. Closes #17.
+- **Temporal mode no longer paces oracle ops.** Oracles have no
+  user-visible timing; pacing them would cause triggers to fire
+  before their queues populate. Triggers still honor their
+  original `ts`.
+
+### Docs
+
+- `docs/ARCHITECTURE.md` adds the async-handler known limitation.
+- Issue #19 rewritten around the invariant framing (was
+  "causal groups").
+
 ## 0.3.1 — event patching hardening
 
 Round of recorder/player fixes surfaced by driving real apps through

@@ -1,6 +1,6 @@
 {
   "name": "remjs",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Event loop replication — serialize JS program execution as structured ops",
   "type": "module",
   "main": "dist/index.js",

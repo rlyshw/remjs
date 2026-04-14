@@ -52,10 +52,8 @@ export function createPlayer(options: PlayerOptions = {}): Player {
   const clockQueue: number[] = [];
   const fetchQueue: Map<number, { resolve: (r: Response) => void; op: NetworkOp }> = new Map();
 
-  // Temporal replay state
+  // Temporal replay state — tracks setTimeout handles so destroy() can cancel.
   const pendingTimers: ReturnType<typeof setTimeout>[] = [];
-  let baseTs: number | null = null; // first op's ts in current batch
-  let baseNow: number | null = null; // wall time when we started replaying
 
   // Save originals for cleanup
   const origRandom = Math.random;
@@ -216,31 +214,66 @@ export function createPlayer(options: PlayerOptions = {}): Player {
     document.documentElement.innerHTML = op.html;
   }
 
+  /**
+   * The replication invariant: every oracle value a handler reads must
+   * be available on the follower before the trigger that runs the
+   * handler. The recorder emits in observation order (trigger first,
+   * oracles second); we reorder on apply so oracles land before the
+   * trigger that consumes them. See epic #19 for why this only covers
+   * the sync-handler case.
+   */
+  function isOracle(op: Op): boolean {
+    switch (op.type) {
+      case "random":
+      case "clock":
+      case "network":
+        return true;
+      case "storage":
+        return op.action === "get";
+      default:
+        return false;
+    }
+  }
+
+  function partitionOps(ops: readonly Op[]): { oracles: Op[]; triggers: Op[] } {
+    const oracles: Op[] = [];
+    const triggers: Op[] = [];
+    for (const op of ops) {
+      if (isOracle(op)) oracles.push(op);
+      else triggers.push(op);
+    }
+    return { oracles, triggers };
+  }
+
   function apply(ops: readonly Op[], options?: ApplyOptions): void {
     install();
+    if (ops.length === 0) return;
     const mode = options?.mode ?? defaultMode;
 
-    if (mode === "instant" || ops.length === 0) {
-      for (const op of ops) applyOp(op);
+    const { oracles, triggers } = partitionOps(ops);
+
+    // Oracles populate the follower's queues. They're not user-visible,
+    // so we apply them synchronously regardless of mode — their ts is
+    // only used to order them among themselves (already preserved by
+    // partition's stable order).
+    for (const op of oracles) applyOp(op);
+
+    if (mode === "instant") {
+      for (const op of triggers) applyOp(op);
       return;
     }
 
-    // Temporal replay: schedule each op at its original relative time
-    const now = typeof performance !== "undefined" ? performance.now() : Date.now();
-
-    // Find the earliest ts in this batch as the reference point
+    // Temporal mode for triggers: schedule at original relative times.
     let minTs = Infinity;
-    for (const op of ops) {
+    for (const op of triggers) {
       if (op.ts !== undefined && op.ts < minTs) minTs = op.ts;
     }
-
-    // If no timestamps, fall back to instant
     if (minTs === Infinity) {
-      for (const op of ops) applyOp(op);
+      for (const op of triggers) applyOp(op);
       return;
     }
 
-    for (const op of ops) {
+    for (const op of triggers) {
       const delay = op.ts !== undefined ? op.ts - minTs : 0;
       if (delay <= 0) {
         applyOp(op);

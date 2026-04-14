@@ -99,6 +99,62 @@ describe("player", () => {
     player.destroy();
   });
 
+  it("applies oracles before triggers within a batch (invariant)", () => {
+    // Observability: use a fake querySelector that records the order
+    // of calls. When applyEvent runs, it calls querySelector. By the
+    // time the event is processed, the random queue must already be
+    // populated with the oracle value from later in the batch.
+    let randomQueueAtEvent: number | null = null;
+    (globalThis as any).document = {
+      querySelector: () => {
+        randomQueueAtEvent = Math.random();
+        return null; // short-circuit dispatch; we only need to observe ordering
+      },
+    };
+
+    const player = createPlayer({ mode: "instant", timers: false, network: false, storage: false });
+
+    // Batch in observation order: event first, random second.
+    player.apply([
+      { type: "event", eventType: "click", targetPath: "#x", timestamp: 0, detail: {} },
+      { type: "random", source: "math", values: [0.42] },
+    ]);
+
+    // If the reorder works, by the time querySelector runs (inside
+    // applyEvent), the random queue was already seeded with 0.42.
+    expect(randomQueueAtEvent).toBe(0.42);
+
+    delete (globalThis as any).document;
+    player.destroy();
+  });
+
+  it("in temporal mode, oracles apply synchronously even with later ts", () => {
+    let randomAtEvent: number | null = null;
+    (globalThis as any).document = {
+      querySelector: () => {
+        randomAtEvent = Math.random();
+        return null;
+      },
+    };
+
+    const player = createPlayer({ mode: "temporal", timers: false, network: false, storage: false });
+
+    // Event has EARLIER ts than the random that seeds its handler.
+    // Before the fix, temporal scheduling would fire the event at ts 0
+    // (immediately) while random waited until ts 100 — queue empty at
+    // dispatch. With oracle-first apply, random lands synchronously
+    // before any scheduling runs.
+    player.apply([
+      { type: "event", eventType: "click", targetPath: "#x", timestamp: 0, detail: {}, ts: 0 },
+      { type: "random", source: "math", values: [0.91], ts: 100 },
+    ]);
+
+    expect(randomAtEvent).toBe(0.91);
+
+    delete (globalThis as any).document;
+    player.destroy();
+  });
+
   it("accepts per-apply mode override", () => {
     // Default temporal, override to instant for catch-up batch
     const player = createPlayer({ mode: "temporal", events: false, timers: false, network: false, storage: false });

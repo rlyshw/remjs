@@ -178,6 +178,15 @@ prefers the fractional form when present.
 
 ## Known limitations
 
+- **Async handler continuations aren't covered by the replay invariant.**
+  When a handler `await`s and reads oracles in the continuation — e.g.
+  `await fetch(...); const r = Math.random()` — the continuation's
+  oracle reads land in a different recorder batch from the trigger
+  that resumed them. The player's in-batch reorder (0.3.2) can't move
+  ops across batches, so the follower's continuation races ahead of
+  its oracle queue and diverges. Tracked under epic #19 with the
+  design discussion of cross-batch ordering mechanisms.
+
 - **Pending timers and network are not reanimated on snapshot.** The
   `SnapshotOp` carries `pendingTimers` and `pendingNetwork` lists, but
   the player currently ignores them — a late-joining follower misses
