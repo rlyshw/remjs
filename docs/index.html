@@ -761,9 +761,12 @@
     <h1>rem<span>js</span></h1>
     <p class="tagline">Event loop replication</p>
     <p class="hero-desc">
-      Capture event loop inputs as structured ops, replay them on any
-      runtime for identical execution. Same code + same inputs = same state.
-      No framework hooks, no transport, pure TypeScript.
+      A running JavaScript program is a state machine driven by its event
+      loop inputs — clicks, timers, network responses, reads of
+      <code>Math.random</code> and <code>Date.now</code>. remjs captures
+      those inputs on a <strong>leader</strong> and replays them on a
+      <strong>follower</strong>, so two runtimes running the same code
+      reach the same state without any coordination of their own.
     </p>
 
     <div class="hero-buttons">
@@ -829,12 +832,13 @@
   <section id="how">
     <h2>How it <span>works</span></h2>
     <p class="section-desc">
-      <code>createRecorder</code> monkey-patches the event loop surface —
-      <code>addEventListener</code>, <code>setTimeout</code>,
-      <code>fetch</code>, <code>Math.random</code>, <code>Date.now</code> —
-      and captures every input as a structured op. Ship the ops over any
-      transport, and <code>createPlayer</code> replays them on the other
-      side. Same code, same inputs, identical execution.
+      <code>createRecorder</code> installs patches at the event loop's
+      entry points — <code>addEventListener</code>, <code>setTimeout</code>,
+      <code>fetch</code>, <code>Math.random</code>, <code>Date.now</code>,
+      <code>localStorage</code> — and records every input that crosses
+      into the runtime. Ship the resulting op stream over any transport,
+      and <code>createPlayer</code> drives the other runtime's loop with
+      the same inputs in the same order.
     </p>
 
     <div class="code-block">
@@ -929,26 +933,46 @@ transport.onMessage = (ops) =&gt; {
   <section id="architecture">
     <h2>Archi<span>tecture</span></h2>
     <p class="section-desc">
-      The formal model is a <strong>replicated state machine</strong>: every
-      replica runs the same code and processes the same inputs in the same
-      order. The JS event loop's run-to-completion semantics make each task
-      an atomic unit — the natural "op."
+      The formal model is a <strong>replicated state machine</strong>.
+      Two runtimes reach the same state iff one invariant holds: every
+      non-deterministic value a handler reads on the leader is available
+      on the follower before the trigger that runs the handler.
     </p>
 
     <div class="code-block">
       <div class="code-header">the replication model</div>
-      <pre><span class="cmt">                recorder                           player</span>
-<span class="cmt">          ┌──────────────────┐               ┌──────────────────┐</span>
-<span class="cmt"> browser  │  patches:        │               │  replays:        │</span>
-<span class="cmt"> inputs   │  addEventListener │               │  dispatchEvent   │</span>
-<span class="cmt">  ──────► │  setTimeout      │ ── ops[] ───► │  seed random     │</span>
-<span class="cmt">          │  fetch           │  (transport)  │  align clock     │</span>
-<span class="cmt">          │  Math.random     │               │  inject response │</span>
-<span class="cmt">          │  Date.now        │               │  fire callback   │</span>
-<span class="cmt">          └──────────────────┘               └──────────────────┘</span></pre>
+      <pre><span class="cmt">          LEADER                                       FOLLOWER</span>
+<span class="cmt">          ┌──────────────────────┐                     ┌──────────────────────┐</span>
+<span class="cmt">          │  patches observe     │                     │  player drives       │</span>
+<span class="cmt">          │    addEventListener  │      op batch       │    dispatchEvent     │</span>
+<span class="cmt">   input  │    setTimeout        │   ─────────────►    │    queue sync oracle │</span>
+<span class="cmt">  ──────► │    fetch             │    (any transport)  │    resolve async     │</span>
+<span class="cmt">          │    Math.random       │                     │      oracle await    │</span>
+<span class="cmt">          │    Date.now          │                     │                      │</span>
+<span class="cmt">          │    localStorage      │                     │                      │</span>
+<span class="cmt">          └──────────────────────┘                     └──────────────────────┘</span>
+<span class="cmt">            recorder: one batch = one event loop task</span></pre>
     </div>
 
     <p class="section-desc" style="margin-top: 1rem;">
+      Inputs split by JavaScript's sync/async boundary.
+      <strong>Sync oracles</strong> (<code>Math.random</code>,
+      <code>Date.now</code>, <code>localStorage.getItem</code>) must return
+      immediately, so the follower pre-queues values before the handler runs.
+      <strong>Async oracles</strong> (<code>fetch</code>, XHR, WebSocket)
+      return a Promise the follower holds until the leader's matching op
+      arrives — no native fallback, no silent divergence.
+    </p>
+
+    <p class="section-desc" style="margin-top: 0.75rem;">
+      Batches are task-granular. One event loop task plus its microtask
+      drain — the trigger, its synchronous handler, and any
+      <code>await</code> resumptions chained from it — lands in one wire
+      batch. That keeps handler causality intact across async code without
+      any op-level grouping or wire-format markers.
+    </p>
+
+    <p class="section-desc" style="margin-top: 0.75rem;">
       <strong>remdom</strong> reifies the output surface (DOM mutations).
       <strong>remjs</strong> reifies the input surface (event loop tasks).
       Together: full round-trip replication.
@@ -985,12 +1009,12 @@ transport.onMessage = (ops) =&gt; {
         <p>No sockets, no auth, no framing. You pick the wire.</p>
       </div>
       <div class="feature">
-        <h3><span class="dot no"></span>Conflict resolution</h3>
-        <p>Ops apply in order. Multi-writer needs a coordination layer.</p>
+        <h3><span class="dot no"></span>Consensus</h3>
+        <p>Total-order broadcast, CRDTs, Lamport clocks — for multi-writer topologies, put them above remjs.</p>
       </div>
       <div class="feature">
-        <h3><span class="dot no"></span>Interception scope</h3>
-        <p>Global patches or scoped hooks — your call.</p>
+        <h3><span class="dot no"></span>Topology</h3>
+        <p>Star, mesh, gossip — remjs is the substrate, not the routing.</p>
       </div>
       <div class="feature">
         <h3><span class="dot no"></span>Framework integration</h3>
