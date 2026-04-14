@@ -176,7 +176,53 @@ Strict mode is additive across versions:
 - **0.5.3** — oracles: `Math.random` / `Date.now` /
   `localStorage.getItem` / `sessionStorage.getItem` throw
   `RemjsStrictEmptyQueueError` on empty queue instead of falling
-  through to native. *(this release)*
+  through to native.
+- **0.5.4** — pause primitive: `player.pause()` / `step()` /
+  `resume()` with instant and temporal drain modes. Requires
+  `strict: true`. *(this release)*
+
+### Pause, step, resume (0.5.4+)
+
+On a strict player, `pause()` stops draining the apply queue —
+new `apply(ops)` calls buffer the batch instead of executing.
+`step()` pops and applies the next buffered batch; `resume()`
+drains the rest.
+
+```ts
+const player = createPlayer({ strict: true });
+
+// Pause op application — follower freezes.
+player.pause();
+
+// Each apply() call buffers a batch now.
+ws.onmessage = (e) => player.apply(jsonCodec.decodeBatch(e.data));
+
+// Step through one batch at a time.
+player.step();
+player.step();
+
+// Drain the rest.
+player.resume();   // instant (burst replay)
+// or
+player.resume({ mode: "temporal" });   // paced by original ts deltas
+```
+
+**Instant vs temporal resume.** Instant burst-replays everything,
+converging state immediately but compressing wall-clock time.
+Temporal paces the drain by each batch's `ts` delta and keeps the
+follower behind leader by the pause duration — useful for
+animation-sensitive replay that needs original cadence.
+
+**Queue caps for long pauses.** `pause({ maxQueue: N,
+onQueueFull: "drain" | "instant" })` bounds the buffer so runaway
+pauses don't eat memory. `"drain"` eagerly applies the oldest half
+and keeps paused; `"instant"` flips back to running and replays
+everything.
+
+**Pause requires strict mode.** `pause()` on a non-strict player
+throws — native timers/events/oracle fallback would still run
+underneath, making pause a leaky abstraction. Use
+`createPlayer({ strict: true })` if you need pause.
 - **0.5.4** — pause/step: `player.pause() / step() / resume()` on top
   of the strict tier. Closes #18.
 - **0.5.5** — scoped capture: follower becomes leader for declared

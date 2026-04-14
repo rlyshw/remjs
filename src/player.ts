@@ -65,8 +65,62 @@ export interface ApplyOptions {
   mode?: ReplayMode;
 }
 
+export interface ResumeOptions {
+  /**
+   * `"instant"` (default) drains all buffered batches synchronously
+   * in a burst — every handler fires, state converges immediately,
+   * wall-clock compresses. `"temporal"` paces the drain by each
+   * batch's `ts` delta via a single advancing timer loop — the
+   * follower replays the backlog at its original cadence and
+   * stays behind leader by the pause duration.
+   */
+  mode?: ReplayMode;
+  /**
+   * Reserved for future use — in temporal mode, coalesce consecutive
+   * ops with the same (seq, kind) into one fire-count op before
+   * draining. Not implemented in 0.5.4; accepted but ignored.
+   */
+  coalesce?: boolean;
+}
+
+export interface PauseQueueOptions {
+  /**
+   * Refuse to buffer more than N ops while paused. When exceeded,
+   * the player applies `onQueueFull`:
+   * - `"drain"` (default): eagerly apply the oldest half of the queue
+   *   under `instant` semantics and continue buffering new ops.
+   * - `"instant"`: transition the player back to running in instant
+   *   mode and replay everything immediately.
+   *
+   * Default: no cap.
+   */
+  maxQueue?: number;
+  onQueueFull?: "drain" | "instant";
+}
+
 export interface Player {
   apply(ops: readonly Op[], options?: ApplyOptions): void;
+  /**
+   * Stop draining the apply queue. Incoming `apply()` calls buffer
+   * the batch instead of executing. Requires `strict: true` —
+   * non-strict pause would leak through native timers / events
+   * / oracle fallback and produce divergence.
+   */
+  pause(options?: PauseQueueOptions): void;
+  /**
+   * Apply exactly one buffered batch while paused. Returns `true`
+   * if a batch was applied, `false` if the queue was empty or the
+   * player was not paused.
+   */
+  step(): boolean;
+  /**
+   * Drain the buffered queue and return the player to running state.
+   * Mode defaults to `"instant"` — see ResumeOptions for the
+   * tradeoff.
+   */
+  resume(options?: ResumeOptions): void;
+  /** Whether the player is currently paused. */
+  readonly paused: boolean;
   destroy(): void;
 }
 
@@ -553,8 +607,117 @@ export function createPlayer(options: PlayerOptions = {}): Player {
     return { oracles, triggers };
   }
 
+  // ── Pause / resume / step state ────────────────────────────────
+  let paused = false;
+  const pendingBatches: Op[][] = [];
+  let pauseOpts: PauseQueueOptions = {};
+  let temporalDrainTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function queueSize(): number {
+    let n = 0;
+    for (const b of pendingBatches) n += b.length;
+    return n;
+  }
+
+  function drainBatchesInstant(batches: Op[][]): void {
+    for (const batch of batches) applyInternal(batch, { mode: "instant" });
+  }
+
+  function drainBatchesTemporal(batches: Op[][]): void {
+    // Cancel any prior temporal drain in progress.
+    if (temporalDrainTimer) {
+      origClearTimeout.call(globalThis, temporalDrainTimer);
+      temporalDrainTimer = null;
+    }
+    const firstBatchTs = minBatchTs(batches[0]);
+    const drainStart = performance.now();
+    let cursor = 0;
+
+    const pump = () => {
+      temporalDrainTimer = null;
+      if (cursor >= batches.length) return;
+      applyInternal(batches[cursor], { mode: "instant" });
+      cursor++;
+      if (cursor >= batches.length) return;
+      const nextTs = minBatchTs(batches[cursor]);
+      const targetDelta = (nextTs !== undefined && firstBatchTs !== undefined)
+        ? nextTs - firstBatchTs
+        : 0;
+      const elapsed = performance.now() - drainStart;
+      const delay = Math.max(0, targetDelta - elapsed);
+      temporalDrainTimer = origSetTimeout.call(globalThis, pump, delay) as ReturnType<typeof setTimeout>;
+    };
+    pump();
+  }
+
+  function minBatchTs(batch: Op[]): number | undefined {
+    let min: number | undefined;
+    for (const op of batch) {
+      if (op.ts !== undefined && (min === undefined || op.ts < min)) min = op.ts;
+    }
+    return min;
+  }
+
+  function enqueueBatch(ops: readonly Op[]): void {
+    pendingBatches.push([...ops]);
+    const cap = pauseOpts.maxQueue;
+    if (cap !== undefined && queueSize() > cap) {
+      const policy = pauseOpts.onQueueFull ?? "drain";
+      if (policy === "instant") {
+        paused = false;
+        const batches = pendingBatches.splice(0, pendingBatches.length);
+        pauseOpts = {};
+        drainBatchesInstant(batches);
+      } else {
+        // "drain": apply oldest half, keep paused.
+        const half = Math.max(1, Math.floor(pendingBatches.length / 2));
+        const chunk = pendingBatches.splice(0, half);
+        drainBatchesInstant(chunk);
+      }
+    }
+  }
+
   function apply(ops: readonly Op[], options?: ApplyOptions): void {
     install();
+    if (ops.length === 0) return;
+    if (paused) {
+      enqueueBatch(ops);
+      return;
+    }
+    applyInternal(ops, options);
+  }
+
+  function pause(options?: PauseQueueOptions): void {
+    if (!strict) {
+      throw new Error(
+        "[remjs] player.pause() requires createPlayer({ strict: true }). " +
+        "Non-strict pause is not a true freeze — native timers, events, " +
+        "and oracle fallback continue underneath the player."
+      );
+    }
+    paused = true;
+    pauseOpts = options ?? {};
+  }
+
+  function step(): boolean {
+    if (!paused) return false;
+    const batch = pendingBatches.shift();
+    if (!batch) return false;
+    applyInternal(batch, { mode: "instant" });
+    return true;
+  }
+
+  function resume(options?: ResumeOptions): void {
+    paused = false;
+    const mode = options?.mode ?? "instant";
+    const batches = pendingBatches.splice(0, pendingBatches.length);
+    pauseOpts = {};
+    if (batches.length === 0) return;
+    if (mode === "temporal") drainBatchesTemporal(batches);
+    else drainBatchesInstant(batches);
+  }
+
+  function applyInternal(ops: readonly Op[], options?: ApplyOptions): void {
     if (ops.length === 0) return;
     const mode = options?.mode ?? defaultMode;
 
@@ -597,6 +760,13 @@ export function createPlayer(options: PlayerOptions = {}): Player {
   function destroy(): void {
     for (const t of pendingTimers) origClearTimeout.call(globalThis, t);
     pendingTimers.length = 0;
+    if (temporalDrainTimer) {
+      origClearTimeout.call(globalThis, temporalDrainTimer);
+      temporalDrainTimer = null;
+    }
+    pendingBatches.length = 0;
+    paused = false;
+    pauseOpts = {};
     if (!installed) return;
     installed = false;
     Math.random = origRandom;
@@ -631,5 +801,12 @@ export function createPlayer(options: PlayerOptions = {}): Player {
     queuedByKey.clear();
   }
 
-  return { apply, destroy };
+  return {
+    apply,
+    pause,
+    step,
+    resume,
+    get paused() { return paused; },
+    destroy,
+  };
 }

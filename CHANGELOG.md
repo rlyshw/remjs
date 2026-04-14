@@ -1,5 +1,63 @@
 # Changelog
 
+## 0.5.4 — pause primitive (epic #22, milestone 4)
+
+Fourth slice of the strict-mode epic. Builds on the strict tier
+(0.5.1–0.5.3) to ship a real pause/resume/step API. Because the
+strict follower has no native timers, events, or oracle fallback
+running underneath, pausing op application is an actual freeze —
+not the best-effort freeze a pre-strict player could offer.
+
+Closes #18.
+
+### Added
+
+- **`player.pause(options?)`** — stops draining the apply queue.
+  Incoming `apply(ops)` calls buffer the batch instead of executing.
+  Requires `createPlayer({ strict: true })`; throws on non-strict
+  players (the name would lie about what the primitive does).
+- **`player.step()`** — applies exactly one buffered batch while
+  paused. Returns `true` if a batch was applied, `false` if the
+  queue was empty or the player wasn't paused.
+- **`player.resume({ mode, coalesce? }?)`** — drains buffered
+  batches. `mode: "instant"` (default) drains synchronously in a
+  burst; `mode: "temporal"` paces the drain by `ts` deltas via a
+  single advancing timer loop. `coalesce` reserved for a future
+  release; accepted but ignored in 0.5.4.
+- **`PauseQueueOptions`** — `{ maxQueue, onQueueFull }` on
+  `pause()` for unbounded-pause safety. When buffered ops exceed
+  `maxQueue`, `onQueueFull: "drain"` (default) eagerly applies the
+  oldest half under instant semantics and keeps the player paused;
+  `"instant"` flips the player back to running and replays
+  everything.
+- **`player.paused`** — readonly boolean reporting current state.
+
+### Changed
+
+- **Player's `apply()`** now checks the paused state and either
+  buffers or passes through. Internal applyInternal carries the
+  unchanged apply-mode logic.
+- **`destroy()`** now cancels any in-flight temporal drain timer
+  and clears the pending-batch queue.
+
+### Notes
+
+- Rejected: `skip` resume mode. Dropping queued ops guarantees
+  state drift for any non-idempotent handler; documented and
+  rejected outright.
+- No API to pause non-strict players. Pause-the-scheduler without
+  the strict tier underneath is best-effort at most and doesn't
+  generalize — better to have one tight semantic than two leaky
+  ones.
+
+### Docs
+
+- `docs/USAGE.md` — documents the pause API and the instant-vs-
+  temporal tradeoff.
+- `docs/ARCHITECTURE.md` — gains a "Pause primitive (0.5.4)"
+  section covering the buffered-queue model and the single-timer-
+  loop drain pattern.
+
 ## 0.5.3 — strict oracles (epic #22, milestone 3)
 
 Third slice of the strict-mode epic. Closes the last fall-through

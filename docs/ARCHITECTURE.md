@@ -342,11 +342,49 @@ divergence. If your app reads an oracle under strict mode and no
 one records that subsystem, you want to find out at the offending
 call, not later via mystery state drift.
 
-### Milestones 4–6
+### Pause primitive (0.5.4)
 
-Tracked under epic [#22]. Pause/step primitive built on top of the
-strict tier (0.5.4), multi-writer via recorder+strict coexistence
-(0.5.5), topology docs (0.5.6).
+With 0.5.1–0.5.3 landed, the follower's three native channels —
+timers, events, oracles — are all gated. Between op applications
+nothing runs. That's what makes pause-the-scheduler equivalent to
+freeze-the-follower.
+
+The implementation is a buffered queue. When `paused`, `apply(ops)`
+pushes `[...ops]` onto `pendingBatches` instead of calling
+`applyInternal`. `step()` shifts one batch off and applies it
+instantly. `resume()` drains.
+
+**Instant drain** is a plain `for` loop over `pendingBatches`.
+Every handler fires; state converges; wall-clock compresses.
+Correct for debug, catch-up, and test harnesses.
+
+**Temporal drain** uses a single advancing setTimeout loop — not
+N setTimeouts — so large backlogs don't bloat the timer heap. The
+loop computes `targetDelta = nextBatchTs - firstBatchTs` and
+schedules the next pump at `Math.max(0, targetDelta - elapsed)`.
+Per-batch application still goes through `applyInternal({ mode:
+"instant" })` because in-batch ordering (oracles-before-triggers,
+per-op ts pacing within a batch) is independent of the outer
+drain's pacing.
+
+**The `maxQueue` safety knob** caps how much can buffer during an
+unbounded pause. Overflow policy is user-chosen:
+`"drain"` applies the oldest half instantly and keeps paused;
+`"instant"` returns to running and replays everything. Both
+converge state; they differ in who controls the wake-up.
+
+**Why pause is strict-only.** A non-strict player's `pause()`
+would be a lie: native rAF on the follower would keep firing, a
+rAF-driven physics loop would keep advancing, user clicks on the
+follower DOM would still produce handler invocations. The feature
+name implies a guarantee the non-strict tier can't provide.
+Rather than ship two pause semantics (leaky and true) and explain
+the difference, the API refuses the leaky one.
+
+### Milestones 5–6
+
+Tracked under epic [#22]. Multi-writer via recorder+strict
+coexistence (0.5.5), topology docs (0.5.6).
 
 [#22]: https://github.com/rlyshw/remjs/issues/22
 

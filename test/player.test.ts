@@ -473,6 +473,131 @@ describe("player", () => {
       });
     });
 
+    describe("pause / step / resume (0.5.4)", () => {
+      function makePlayer() {
+        return createPlayer({
+          strict: true,
+          events: false, network: false, random: true, clock: false, storage: false,
+        });
+      }
+
+      it("requires strict mode — pause() throws on non-strict player", () => {
+        const player = createPlayer({
+          events: false, network: false, random: false, clock: false, storage: false,
+        });
+        player.apply([]);
+        expect(() => player.pause()).toThrow(/strict: true/);
+        player.destroy();
+      });
+
+      it("apply() buffers while paused; resume drains", () => {
+        const player = makePlayer();
+        player.apply([]);
+
+        player.pause();
+        expect(player.paused).toBe(true);
+
+        player.apply([{ type: "random", source: "math", values: [0.1] }]);
+        player.apply([{ type: "random", source: "math", values: [0.2] }]);
+
+        // Nothing applied yet — queue empty.
+        expect(() => Math.random()).toThrow(RemjsStrictEmptyQueueError);
+
+        player.resume();
+        expect(player.paused).toBe(false);
+        expect(Math.random()).toBe(0.1);
+        expect(Math.random()).toBe(0.2);
+
+        player.destroy();
+      });
+
+      it("step() applies exactly one batch", () => {
+        const player = makePlayer();
+        player.apply([]);
+        player.pause();
+
+        player.apply([{ type: "random", source: "math", values: [0.1] }]);
+        player.apply([{ type: "random", source: "math", values: [0.2] }]);
+
+        expect(player.step()).toBe(true);
+        expect(Math.random()).toBe(0.1);
+
+        expect(player.step()).toBe(true);
+        expect(Math.random()).toBe(0.2);
+
+        expect(player.step()).toBe(false); // queue empty
+        player.destroy();
+      });
+
+      it("step() returns false when not paused", () => {
+        const player = makePlayer();
+        player.apply([]);
+        expect(player.step()).toBe(false);
+        player.destroy();
+      });
+
+      it("resume with mode='instant' (default) drains synchronously", () => {
+        const player = makePlayer();
+        player.apply([]);
+        player.pause();
+        player.apply([{ type: "random", source: "math", values: [1, 2, 3] }]);
+        player.resume();
+        expect(Math.random()).toBe(1);
+        expect(Math.random()).toBe(2);
+        expect(Math.random()).toBe(3);
+        player.destroy();
+      });
+
+      it("maxQueue with 'instant' policy forces immediate drain", () => {
+        const player = makePlayer();
+        player.apply([]);
+        player.pause({ maxQueue: 2, onQueueFull: "instant" });
+
+        // Each batch = 1 op. Pushing 3 exceeds maxQueue=2 → flip to instant.
+        player.apply([{ type: "random", source: "math", values: [10] }]);
+        player.apply([{ type: "random", source: "math", values: [20] }]);
+        player.apply([{ type: "random", source: "math", values: [30] }]);
+
+        // After overflow, player is running again and queue was flushed.
+        expect(player.paused).toBe(false);
+        expect(Math.random()).toBe(10);
+        expect(Math.random()).toBe(20);
+        expect(Math.random()).toBe(30);
+        player.destroy();
+      });
+
+      it("maxQueue with 'drain' policy keeps paused and drains oldest half", () => {
+        const player = makePlayer();
+        player.apply([]);
+        player.pause({ maxQueue: 3, onQueueFull: "drain" });
+
+        player.apply([{ type: "random", source: "math", values: [1] }]);
+        player.apply([{ type: "random", source: "math", values: [2] }]);
+        player.apply([{ type: "random", source: "math", values: [3] }]);
+        player.apply([{ type: "random", source: "math", values: [4] }]);
+        // Size becomes 4 on push, > cap 3 → drain half (2 oldest).
+
+        expect(player.paused).toBe(true); // still paused under "drain"
+        // Oldest two were drained instantly.
+        expect(Math.random()).toBe(1);
+        expect(Math.random()).toBe(2);
+
+        player.resume();
+        expect(Math.random()).toBe(3);
+        expect(Math.random()).toBe(4);
+        player.destroy();
+      });
+
+      it("destroy clears pending batches and temporal drain timer", () => {
+        const player = makePlayer();
+        player.apply([]);
+        player.pause();
+        player.apply([{ type: "random", source: "math", values: [1] }]);
+        player.destroy();
+        expect(player.paused).toBe(false);
+      });
+    });
+
     it("destroy restores setTimeout/setInterval/clearTimeout/clearInterval", () => {
       const origST = globalThis.setTimeout;
       const origSI = globalThis.setInterval;
