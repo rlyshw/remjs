@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { createPlayer } from "../src/player.js";
+import { createPlayer, RemjsStrictEmptyQueueError } from "../src/player.js";
 import type { RandomOp, ClockOp, StorageOp, NetworkOp, TimerOp } from "../src/ops.js";
 
 describe("player", () => {
@@ -408,6 +408,69 @@ describe("player", () => {
       expect(fired).toBe(1); // non-strict: no filter
 
       player.destroy();
+    });
+
+    describe("strict oracles (0.5.3)", () => {
+      it("Math.random throws on empty queue under strict mode", () => {
+        const player = createPlayer({
+          strict: true,
+          events: false, timers: false, network: false, clock: false, storage: false,
+        });
+        player.apply([]);
+        expect(() => Math.random()).toThrow(RemjsStrictEmptyQueueError);
+        expect(() => Math.random()).toThrow(/Math\.random/);
+        player.destroy();
+      });
+
+      it("Math.random pops queued values first, then throws", () => {
+        const player = createPlayer({
+          strict: true,
+          events: false, timers: false, network: false, clock: false, storage: false,
+        });
+        player.apply([{ type: "random", source: "math", values: [0.7] }]);
+        expect(Math.random()).toBe(0.7);
+        expect(() => Math.random()).toThrow(RemjsStrictEmptyQueueError);
+        player.destroy();
+      });
+
+      it("Date.now throws on empty queue under strict mode", () => {
+        const player = createPlayer({
+          strict: true,
+          events: false, timers: false, network: false, random: false, storage: false,
+        });
+        player.apply([]);
+        expect(() => Date.now()).toThrow(RemjsStrictEmptyQueueError);
+        expect(() => Date.now()).toThrow(/Date\.now/);
+        player.destroy();
+      });
+
+      it("non-strict: empty queue falls through to native (unchanged)", () => {
+        const player = createPlayer({
+          events: false, timers: false, network: false, clock: false, storage: false,
+        });
+        player.apply([]);
+        const r = Math.random();
+        expect(r).toBeGreaterThanOrEqual(0);
+        expect(r).toBeLessThan(1);
+        player.destroy();
+      });
+
+      it("RemjsStrictEmptyQueueError carries oracle + key metadata", () => {
+        const player = createPlayer({
+          strict: true,
+          events: false, timers: false, network: false, clock: false, storage: false,
+        });
+        player.apply([]);
+        try {
+          Math.random();
+          throw new Error("should not reach");
+        } catch (e) {
+          expect(e).toBeInstanceOf(RemjsStrictEmptyQueueError);
+          expect((e as RemjsStrictEmptyQueueError).oracle).toBe("Math.random");
+          expect((e as RemjsStrictEmptyQueueError).key).toBeUndefined();
+        }
+        player.destroy();
+      });
     });
 
     it("destroy restores setTimeout/setInterval/clearTimeout/clearInterval", () => {

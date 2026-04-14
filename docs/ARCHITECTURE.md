@@ -314,11 +314,39 @@ installs are attached through the unwrapped native
 player before app code runs — typically at boot, before module
 imports that register listeners.
 
-### Milestones 3–6
+### Strict oracles (0.5.3)
 
-Tracked under epic [#22]. Short form: native oracle fallback removed
-(0.5.3), pause/step primitive built on top of the strict tier
-(0.5.4), scoped capture for P2P (0.5.5), topology docs (0.5.6).
+Under injection mode (and strict mode before 0.5.3), oracle reads
+that didn't have a queued op fell through to native
+(`origMath.random()`, real `Date.now()`, native storage). That
+provided pragmatic degradation in partial-capture sessions but
+opened a divergence channel: any read the recorder didn't cover
+returned a value the leader never saw.
+
+0.5.3 closes it. Under strict mode, oracle reads on an empty queue
+throw `RemjsStrictEmptyQueueError`. The error carries `oracle`
+(`"Math.random"`, `"Date.now"`, `"localStorage.getItem"`,
+`"sessionStorage.getItem"`) and `key` (for storage). Non-strict
+mode still falls through.
+
+Storage support extends beyond set/remove (0.4.x applied those on
+the follower already) to include get: a follower-side patch on
+`localStorage.getItem` / `sessionStorage.getItem` reads from a
+per-`(kind, key)` FIFO queue populated by `storage` ops with
+`action: "get"`. Without this, the follower's reads hit native
+storage directly and returned whatever was locally present —
+rarely what the leader read.
+
+The thrown-error path is intentionally hostile to silent
+divergence. If your app reads an oracle under strict mode and no
+one records that subsystem, you want to find out at the offending
+call, not later via mystery state drift.
+
+### Milestones 4–6
+
+Tracked under epic [#22]. Pause/step primitive built on top of the
+strict tier (0.5.4), multi-writer via recorder+strict coexistence
+(0.5.5), topology docs (0.5.6).
 
 [#22]: https://github.com/rlyshw/remjs/issues/22
 

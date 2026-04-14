@@ -17,6 +17,27 @@ import { installIdlHandlerShim } from "./patches/events.js";
 
 export type ReplayMode = "temporal" | "instant";
 
+/**
+ * Thrown by strict-mode oracle reads (Math.random, Date.now,
+ * localStorage.getItem, etc.) when no matching op has been queued.
+ * Under non-strict mode the oracle falls through to native; strict
+ * mode refuses, because silent fallback is exactly the divergence
+ * channel the tier is designed to close.
+ */
+export class RemjsStrictEmptyQueueError extends Error {
+  readonly oracle: string;
+  readonly key?: string;
+  constructor(oracle: string, key?: string) {
+    super(
+      `[remjs strict] ${oracle}${key !== undefined ? "(" + JSON.stringify(key) + ")" : "()"} read with no queued value. ` +
+      `Expected a matching op before this call. Recorder must have the corresponding subsystem enabled.`
+    );
+    this.name = "RemjsStrictEmptyQueueError";
+    this.oracle = oracle;
+    this.key = key;
+  }
+}
+
 export interface PlayerOptions {
   mode?: ReplayMode;
   /**
@@ -25,9 +46,10 @@ export interface PlayerOptions {
    * matching TimerOps, fetch/oracle reads must be satisfied by ops.
    * Default false (0.4.x injection semantics). See epic #22.
    *
-   * 0.5.1: strict timers land. 0.5.2: strict events — native DOM events
-   * are filtered out unless the player is the one dispatching them.
-   * Further subsystems (oracles, pause) follow in 0.5.3+.
+   * 0.5.1: strict timers. 0.5.2: strict events — native DOM events
+   * filtered unless dispatching from the player. 0.5.3: strict oracles
+   * — Math.random, Date.now, localStorage.getItem throw on empty queue
+   * instead of falling through to native.
    */
   strict?: boolean;
   events?: boolean;
@@ -64,6 +86,13 @@ export function createPlayer(options: PlayerOptions = {}): Player {
   // follower's patched accessors.
   const randomQueue: number[] = [];
   const clockQueue: number[] = [];
+  // Storage-get queue, keyed by "kind|key". FIFO per key: multiple
+  // reads of the same key on the leader replay in order on the
+  // follower.
+  const storageGetQueue: Map<string, Array<string | null>> = new Map();
+  function storageKey(kind: "local" | "session", key: string): string {
+    return `${kind}\u0000${key}`;
+  }
 
   // Generic async-oracle protocol. An async oracle (fetch, XHR,
   // WebSocket, future framework-specific sources) is a pair of ops:
@@ -134,6 +163,10 @@ export function createPlayer(options: PlayerOptions = {}): Player {
   const origSetInterval = globalThis.setInterval;
   const origClearTimeout = globalThis.clearTimeout;
   const origClearInterval = globalThis.clearInterval;
+  const origLocalGetItem = typeof localStorage !== "undefined" ? localStorage.getItem.bind(localStorage) : null;
+  const origSessionGetItem = typeof sessionStorage !== "undefined" ? sessionStorage.getItem.bind(sessionStorage) : null;
+  let restoreLocalGetItem: (() => void) | null = null;
+  let restoreSessionGetItem: (() => void) | null = null;
   const origRAF = typeof requestAnimationFrame === "function" ? requestAnimationFrame : null;
   const origCAF = typeof cancelAnimationFrame === "function" ? cancelAnimationFrame : null;
   const origRIC = typeof (globalThis as any).requestIdleCallback === "function" ? (globalThis as any).requestIdleCallback : null;
@@ -170,6 +203,7 @@ export function createPlayer(options: PlayerOptions = {}): Player {
     if (enableRandom) {
       Math.random = function (): number {
         if (randomQueue.length > 0) return randomQueue.shift()!;
+        if (strict) throw new RemjsStrictEmptyQueueError("Math.random");
         return origRandom();
       };
     }
@@ -177,6 +211,7 @@ export function createPlayer(options: PlayerOptions = {}): Player {
     if (enableClock) {
       Date.now = function (): number {
         if (clockQueue.length > 0) return clockQueue.shift()!;
+        if (strict) throw new RemjsStrictEmptyQueueError("Date.now");
         return origDateNow.call(Date);
       };
     }
@@ -196,6 +231,38 @@ export function createPlayer(options: PlayerOptions = {}): Player {
 
     if (strict && enableTimers) installStrictTimers();
     if (strict && enableEvents) installStrictEvents();
+    if (strict && enableStorage) installStrictStorage();
+  }
+
+  function installStrictStorage(): void {
+    if (typeof localStorage !== "undefined" && origLocalGetItem) {
+      const patched = function (key: string): string | null {
+        const k = storageKey("local", key);
+        const queue = storageGetQueue.get(k);
+        if (queue && queue.length > 0) {
+          const value = queue.shift()!;
+          if (queue.length === 0) storageGetQueue.delete(k);
+          return value;
+        }
+        throw new RemjsStrictEmptyQueueError("localStorage.getItem", key);
+      };
+      localStorage.getItem = patched;
+      restoreLocalGetItem = () => { localStorage.getItem = origLocalGetItem; };
+    }
+    if (typeof sessionStorage !== "undefined" && origSessionGetItem) {
+      const patched = function (key: string): string | null {
+        const k = storageKey("session", key);
+        const queue = storageGetQueue.get(k);
+        if (queue && queue.length > 0) {
+          const value = queue.shift()!;
+          if (queue.length === 0) storageGetQueue.delete(k);
+          return value;
+        }
+        throw new RemjsStrictEmptyQueueError("sessionStorage.getItem", key);
+      };
+      sessionStorage.getItem = patched;
+      restoreSessionGetItem = () => { sessionStorage.getItem = origSessionGetItem; };
+    }
   }
 
   function installStrictEvents(): void {
@@ -433,6 +500,15 @@ export function createPlayer(options: PlayerOptions = {}): Player {
 
   function applyStorage(op: StorageOp): void {
     if (!enableStorage) return;
+    if (op.action === "get") {
+      // Queue the recorded read value so the follower's patched
+      // getItem returns it. FIFO per (kind, key).
+      const k = storageKey(op.kind, op.key);
+      const q = storageGetQueue.get(k) ?? [];
+      q.push(op.value);
+      storageGetQueue.set(k, q);
+      return;
+    }
     const storage = op.kind === "local"
       ? (typeof localStorage !== "undefined" ? localStorage : null)
       : (typeof sessionStorage !== "undefined" ? sessionStorage : null);
@@ -541,6 +617,9 @@ export function createPlayer(options: PlayerOptions = {}): Player {
       uninstallStrictEvents();
       uninstallStrictEvents = null;
     }
+    if (restoreLocalGetItem) { restoreLocalGetItem(); restoreLocalGetItem = null; }
+    if (restoreSessionGetItem) { restoreSessionGetItem(); restoreSessionGetItem = null; }
+    storageGetQueue.clear();
     randomQueue.length = 0;
     clockQueue.length = 0;
     // Reject any still-pending async-oracle waiters so their promises

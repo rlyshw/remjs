@@ -33,5 +33,5 @@ export { createRecorder } from "./recorder.js";
 export type { Recorder, RecorderOptions, BatchMode } from "./recorder.js";
 
 // Player
-export { createPlayer } from "./player.js";
+export { createPlayer, RemjsStrictEmptyQueueError } from "./player.js";
 export type { Player, PlayerOptions, ApplyOptions, ReplayMode } from "./player.js";

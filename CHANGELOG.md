@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.5.3 — strict oracles (epic #22, milestone 3)
+
+Third slice of the strict-mode epic. Closes the last fall-through
+path on the follower: oracle reads (`Math.random`, `Date.now`,
+`localStorage.getItem`, `sessionStorage.getItem`) no longer fall
+back to native values on empty queue. They throw.
+
+Under injection-mode (0.4.x and default 0.5.x), unmatched reads
+dropping to native was a pragmatic choice — not every session
+records every oracle, and returning *something* kept demos running.
+The cost was silent divergence: the follower read a value the
+leader never saw. Strict mode rejects that trade.
+
+### Added
+
+- **`RemjsStrictEmptyQueueError`** — thrown by strict-mode oracle
+  reads when no matching op has been queued. Carries `oracle` (e.g.
+  `"Math.random"`, `"localStorage.getItem"`) and `key` (present for
+  storage). Exported from the package root for `instanceof` checks.
+- **Strict storage-get handling.** Under strict mode the follower's
+  `localStorage.getItem` / `sessionStorage.getItem` are patched to
+  read from a per-`(kind, key)` FIFO queue populated by `storage`
+  ops with `action: "get"`. Previously the follower let these reads
+  hit native storage directly, which diverged from the leader's
+  recorded values. Outside strict mode, behavior unchanged.
+
+### Changed
+
+- **`Math.random` under strict mode** — throws
+  `RemjsStrictEmptyQueueError("Math.random")` on empty queue.
+  Non-strict mode keeps falling through to native.
+- **`Date.now` under strict mode** — throws
+  `RemjsStrictEmptyQueueError("Date.now")` on empty queue.
+  Non-strict mode keeps falling through to native.
+
+### Docs
+
+- `docs/USAGE.md` — strict-mode milestone list updated.
+- `docs/ARCHITECTURE.md` — "Strict oracles (0.5.3)" section covering
+  the sync-oracle queue model, storage-get support, and the
+  `RemjsStrictEmptyQueueError` contract.
+
 ## 0.5.2 — strict events (epic #22, milestone 2)
 
 Second slice of the strict-mode epic. Closes the native-event

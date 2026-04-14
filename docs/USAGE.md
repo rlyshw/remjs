@@ -172,10 +172,11 @@ Strict mode is additive across versions:
   cascades outside player dispatch) are filtered out at
   `addEventListener`. Synthetic events from app code (`new Event`)
   still pass so deterministic side effects work. IDL handlers
-  (`el.onclick = fn`) get the same filter. *(this release)*
+  (`el.onclick = fn`) get the same filter.
 - **0.5.3** — oracles: `Math.random` / `Date.now` /
-  `localStorage.getItem` throw on empty queue instead of falling
-  through to native.
+  `localStorage.getItem` / `sessionStorage.getItem` throw
+  `RemjsStrictEmptyQueueError` on empty queue instead of falling
+  through to native. *(this release)*
 - **0.5.4** — pause/step: `player.pause() / step() / resume()` on top
   of the strict tier. Closes #18.
 - **0.5.5** — scoped capture: follower becomes leader for declared
