@@ -2,7 +2,7 @@
 
 **v0.3.1** · [changelog](./CHANGELOG.md) · [live demo](https://rlyshw.github.io/remjs/mirror.html)
 
-Event loop replication for JavaScript. One sentence, no frills.
+Event loop replication for JavaScript.
 
 A running JavaScript program is a state machine: its state is a
 function of the inputs that cross its event loop — clicks, timers,
