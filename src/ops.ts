@@ -21,6 +21,13 @@
 export interface EventOp {
   type: "event";
   ts?: number;
+  /**
+   * Optional identifier of the peer that produced this op. Stamped by
+   * the recorder when `createRecorder({ peer })` is set; absent
+   * otherwise. The framework never inspects this — it's metadata for
+   * consumers doing multi-writer routing, echo dedup, or consensus.
+   */
+  peer?: string;
   eventType: string;
   targetPath: string;
   timestamp: number;
@@ -32,6 +39,7 @@ export interface EventOp {
 export interface TimerOp {
   type: "timer";
   ts?: number;
+  peer?: string;
   kind: "timeout" | "interval" | "raf" | "idle";
   seq: number;
   scheduledDelay: number;
@@ -43,6 +51,7 @@ export interface TimerOp {
 export interface NetworkOp {
   type: "network";
   ts?: number;
+  peer?: string;
   kind: "fetch" | "xhr" | "websocket";
   seq: number;
   url: string;
@@ -57,6 +66,7 @@ export interface NetworkOp {
 export interface RandomOp {
   type: "random";
   ts?: number;
+  peer?: string;
   source: "math" | "crypto";
   values: number[];
 }
@@ -66,6 +76,7 @@ export interface RandomOp {
 export interface ClockOp {
   type: "clock";
   ts?: number;
+  peer?: string;
   source: "dateNow" | "performanceNow" | "dateConstructor";
   value: number;
 }
@@ -75,6 +86,7 @@ export interface ClockOp {
 export interface StorageOp {
   type: "storage";
   ts?: number;
+  peer?: string;
   kind: "local" | "session";
   action: "get" | "set" | "remove";
   key: string;
@@ -86,6 +98,7 @@ export interface StorageOp {
 export interface NavigationOp {
   type: "navigation";
   ts?: number;
+  peer?: string;
   kind: "popstate" | "hashchange" | "pushState" | "replaceState";
   url: string;
   state?: unknown;
@@ -108,6 +121,7 @@ export interface PendingNetwork {
 export interface SnapshotOp {
   type: "snapshot";
   ts?: number;
+  peer?: string;
   html: string;
   url: string;
   timestamp: number;

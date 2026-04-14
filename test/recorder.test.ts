@@ -161,4 +161,38 @@ describe("recorder", () => {
     expect(timerOps.length).toBeGreaterThanOrEqual(1);
     expect(timerOps[0]!.type).toBe("timer");
   });
+
+  it("stamps peer on every emitted op when configured (0.5.5)", () => {
+    const ops: Op[] = [];
+    const recorder = createRecorder({
+      onOps: (batch) => ops.push(...batch),
+      batchMode: "sync",
+      peer: "alice",
+      events: false, timers: false, network: false, storage: false,
+    });
+    recorder.start();
+    Math.random();
+    Date.now();
+    recorder.stop();
+    expect(ops.length).toBeGreaterThan(0);
+    for (const op of ops) {
+      expect(op.peer).toBe("alice");
+    }
+  });
+
+  it("omits peer field when not configured", () => {
+    const ops: Op[] = [];
+    const recorder = createRecorder({
+      onOps: (batch) => ops.push(...batch),
+      batchMode: "sync",
+      events: false, timers: false, network: false, storage: false,
+    });
+    recorder.start();
+    Math.random();
+    recorder.stop();
+    expect(ops.length).toBeGreaterThan(0);
+    for (const op of ops) {
+      expect(op.peer).toBeUndefined();
+    }
+  });
 });

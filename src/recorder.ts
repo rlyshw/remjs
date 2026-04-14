@@ -33,6 +33,15 @@ export type BatchMode = "task" | "raf" | "microtask" | "sync";
 export interface RecorderOptions {
   onOps: (ops: Op[]) => void;
   batchMode?: BatchMode;
+  /**
+   * Optional identifier stamped onto every emitted op's `peer` field.
+   * Used by multi-writer topologies (mesh P2P, server-authoritative
+   * with client-originated ops, gossip) to distinguish producers on
+   * the op stream without inspecting content. The framework never
+   * inspects this — it's metadata for transport / consensus / echo
+   * dedup above the protocol.
+   */
+  peer?: string;
   events?: boolean;
   timers?: boolean;
   network?: boolean;
@@ -52,6 +61,7 @@ export function createRecorder(options: RecorderOptions): Recorder {
   const {
     onOps,
     batchMode = "task",
+    peer,
     events: enableEvents = true,
     timers: enableTimers = true,
     network: enableNetwork = true,
@@ -99,6 +109,7 @@ export function createRecorder(options: RecorderOptions): Recorder {
   const emit = (op: Op): void => {
     if (!running) return;
     (op as { ts?: number }).ts = getTime();
+    if (peer !== undefined) (op as { peer?: string }).peer = peer;
     pending.push(op);
     schedule();
   };

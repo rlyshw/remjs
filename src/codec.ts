@@ -7,11 +7,25 @@
 
 import type { Op } from "./ops.js";
 
+/**
+ * A minimal batch envelope for multi-writer topologies. Reference
+ * shape only — consumers who need more (sequence numbers, signatures,
+ * timestamps) wrap further; consumers who don't need this use the
+ * plain `encodeBatch` path.
+ */
+export interface BatchMeta {
+  /** Peer that produced this batch. */
+  from: string;
+  ops: Op[];
+}
+
 export interface Codec {
   encode(op: Op): string;
   decode(data: string): Op;
   encodeBatch(ops: readonly Op[]): string;
   decodeBatch(data: string): Op[];
+  encodeBatchWithMeta(meta: BatchMeta): string;
+  decodeBatchWithMeta(data: string): BatchMeta;
 }
 
 export const jsonCodec: Codec = {
@@ -26,5 +40,11 @@ export const jsonCodec: Codec = {
   },
   decodeBatch(data) {
     return JSON.parse(data) as Op[];
+  },
+  encodeBatchWithMeta(meta) {
+    return JSON.stringify(meta);
+  },
+  decodeBatchWithMeta(data) {
+    return JSON.parse(data) as BatchMeta;
   },
 };

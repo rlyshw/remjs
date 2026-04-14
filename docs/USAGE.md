@@ -179,7 +179,11 @@ Strict mode is additive across versions:
   through to native.
 - **0.5.4** — pause primitive: `player.pause()` / `step()` /
   `resume()` with instant and temporal drain modes. Requires
-  `strict: true`. *(this release)*
+  `strict: true`.
+- **0.5.5** — multi-writer support: `RecorderOptions.peer`, `peer?`
+  on every op, `jsonCodec.encodeBatchWithMeta` /
+  `decodeBatchWithMeta` envelope. Enables mesh P2P with per-peer
+  recorder + player coexistence. *(this release)*
 
 ### Pause, step, resume (0.5.4+)
 
@@ -276,6 +280,67 @@ const recorder = createRecorder({ onOps: (ops) => ch.postMessage(ops) });
 const player = createPlayer();
 ch.onmessage = (e) => player.apply(e.data);
 ```
+
+### Multi-writer / mesh P2P (0.5.5+)
+
+Every peer runs **both** a recorder and a player. Local inputs are
+captured by the recorder and broadcast to the mesh; incoming ops from
+other peers are applied by the player. Each peer stamps its outgoing
+ops with a `peer` identifier so consumers can route, dedup echoes,
+and layer consensus on top.
+
+```ts
+import { createRecorder, createPlayer, jsonCodec } from "remjs";
+
+const me = "alice";   // stable peer ID across the session
+
+const ch = new BroadcastChannel("remjs-game");
+const player = createPlayer();
+
+// Apply ops from other peers; ignore echoes of our own.
+ch.onmessage = (e) => {
+  const { from, ops } = jsonCodec.decodeBatchWithMeta(e.data);
+  if (from === me) return;   // echo filter
+  player.apply(ops);
+};
+
+const recorder = createRecorder({
+  onOps: (ops) => ch.postMessage(
+    jsonCodec.encodeBatchWithMeta({ from: me, ops })
+  ),
+  peer: me,
+});
+recorder.start();
+```
+
+**Echo filter.** BroadcastChannel (and most mesh transports) deliver
+your own messages back to you. The `from === me` check above is the
+standard pattern — drop your own ops on ingress because your recorder
+already fired their effects locally. Without the filter, every
+handler on your peer runs twice.
+
+**The `BatchMeta` envelope.** `jsonCodec.encodeBatchWithMeta({ from,
+ops })` wraps the op array with a minimal producer field. Richer
+envelopes (sequence numbers, signatures, wall-clock timestamps,
+room IDs) are consumer turf — wrap further or ignore this helper
+and hand-roll your own.
+
+**Peer ID on ops.** The recorder stamps every emitted op with
+`peer`. Consumers that only need the producer per-op (e.g. CRDTs
+merging by origin) can skip the envelope and inspect `op.peer`
+directly.
+
+**Pure followers.** Observers who only watch the session — spectators,
+replay viewers, server-side record-keepers — run only a player, no
+recorder. They receive and apply; they don't emit.
+
+**Strict mode in multi-writer.** Pure followers usually want
+`createPlayer({ strict: true })` for provable consistency. Peers that
+emit (recorder + player) should stay in the default non-strict player
+— the recorder already captures their local inputs deterministically,
+and the strict filter would drop the trusted events the recorder needs
+to see. (If you need pause-for-debug on an emitting peer, this is a
+real tension; see #22 for the design discussion.)
 
 ### In-process (tests)
 

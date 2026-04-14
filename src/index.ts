@@ -26,7 +26,7 @@ export type {
 
 // Codec
 export { jsonCodec } from "./codec.js";
-export type { Codec } from "./codec.js";
+export type { Codec, BatchMeta } from "./codec.js";
 
 // Recorder
 export { createRecorder } from "./recorder.js";

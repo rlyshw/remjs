@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.5.5 — multi-writer support (epic #22, milestone 5)
+
+Fifth slice of the strict-mode epic. Enables mesh P2P and any other
+multi-writer topology. The core model: every peer runs both a
+recorder (for local inputs) and a player (for remote inputs).
+Identity is stamped on ops so consumers can route, dedup echoes,
+and layer consensus above.
+
+Closes #21.
+
+### Added
+
+- **`peer?: string` on every op.** Optional producer identifier,
+  stamped by the recorder when `createRecorder({ peer })` is set.
+  Absent otherwise. The framework never inspects this — it's
+  metadata for consumers doing multi-writer routing, echo dedup,
+  or consensus.
+- **`RecorderOptions.peer`** — one-line opt-in. Every emitted op
+  gets the stamp.
+- **`BatchMeta` envelope** + **`jsonCodec.encodeBatchWithMeta` /
+  `decodeBatchWithMeta`** — reference `{ from, ops }` wrapper for
+  multi-writer transports. Consumers who want more (sequence
+  numbers, signatures) wrap further; consumers who don't need this
+  use plain `encodeBatch`.
+
+### Docs
+
+- `docs/WIRE_FORMAT.md` — `BaseOp` gains `peer?: string`.
+- `docs/USAGE.md` — multi-writer / mesh P2P section with a
+  BroadcastChannel example, echo-filter pattern, and notes on
+  strict mode + recorder coexistence.
+
+### Scope notes
+
+- **Scope registration abandoned.** The original 0.5.5 sketch had a
+  `captureScope` API for declaring event regions. Discarded after
+  review: scoping app event chains isn't a goal; the recorder
+  already captures everything local, and pairing it with a player
+  is enough.
+- **Echo loops are a foot-gun.** A peer that doesn't filter its own
+  `peer` ID on ingress will double-fire handlers. Documented loudly
+  in USAGE.md.
+- **Trust model.** The `peer` field is unauthenticated — any peer
+  can spoof. Authentication lives in the transport envelope, not
+  the op field.
+
 ## 0.5.4 — pause primitive (epic #22, milestone 4)
 
 Fourth slice of the strict-mode epic. Builds on the strict tier

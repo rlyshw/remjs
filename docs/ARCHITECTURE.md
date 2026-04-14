@@ -381,10 +381,33 @@ name implies a guarantee the non-strict tier can't provide.
 Rather than ship two pause semantics (leaky and true) and explain
 the difference, the API refuses the leaky one.
 
-### Milestones 5–6
+### Multi-writer (0.5.5)
 
-Tracked under epic [#22]. Multi-writer via recorder+strict
-coexistence (0.5.5), topology docs (0.5.6).
+Every peer runs both a recorder (for local inputs) and a player
+(for remote inputs). `RecorderOptions.peer` stamps an identifier on
+every emitted op; consumers use it for echo dedup and consensus.
+`jsonCodec.encodeBatchWithMeta({ from, ops })` provides a minimal
+transport envelope for consumers who want a batch-level producer
+field in addition to the per-op one.
+
+The framework takes no position on consensus, conflict resolution,
+or topology. The peer field is transport-level metadata; the
+framework never inspects it.
+
+**Strict mode + recorder tension.** Pure followers run a strict
+player for provable consistency. Peers that emit (recorder +
+player) face a tension: the strict event filter drops trusted
+events, but the recorder *needs* to see trusted events (they're the
+local user's input). Practical guidance: emitting peers stay in
+non-strict player mode; they gain replication via ops but not
+provable freeze. A peer that needs pause-for-debug while also
+emitting is an unresolved design question — see #22.
+
+### Milestone 6
+
+P2P topology docs: echo-filtering idioms, server-authoritative
+vs. mesh patterns, reference consensus pointers. Descriptive, not
+prescriptive.
 
 [#22]: https://github.com/rlyshw/remjs/issues/22
 

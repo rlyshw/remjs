@@ -29,14 +29,18 @@ the same code, same code path deterministically falls out.
 
 ## Op envelope
 
-Every op is a JSON object with a `type` discriminator and an optional
-`ts` timestamp:
+Every op is a JSON object with a `type` discriminator, an optional
+`ts` timestamp, and an optional `peer` identifier:
 
 ```ts
 interface BaseOp {
   type: "event" | "timer" | "network" | "random" | "clock"
       | "storage" | "navigation" | "snapshot";
-  ts?: number;   // wall clock (performance.now preferred) when recorded
+  ts?: number;    // wall clock (performance.now preferred) when recorded
+  peer?: string;  // producer ID, stamped when recorder has `peer` set
+                  // (0.5.5+); absent otherwise. Framework-transparent —
+                  // consumers use it for multi-writer routing / echo
+                  // dedup / consensus. See USAGE.md multiplayer section.
 }
 ```
 

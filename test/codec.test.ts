@@ -111,4 +111,27 @@ describe("jsonCodec", () => {
     };
     expect(jsonCodec.decode(jsonCodec.encode(op))).toEqual(op);
   });
+
+  it("preserves optional peer field on ops", () => {
+    const op: EventOp = {
+      type: "event",
+      peer: "alice",
+      eventType: "click",
+      targetPath: "#btn",
+      timestamp: 0,
+      detail: {},
+    };
+    expect(jsonCodec.decode(jsonCodec.encode(op))).toEqual(op);
+  });
+
+  it("encodes and decodes batch envelope with meta", () => {
+    const ops: Op[] = [
+      { type: "random", source: "math", values: [0.5] },
+      { type: "clock", source: "dateNow", value: 1000 },
+    ];
+    const encoded = jsonCodec.encodeBatchWithMeta({ from: "alice", ops });
+    const decoded = jsonCodec.decodeBatchWithMeta(encoded);
+    expect(decoded.from).toBe("alice");
+    expect(decoded.ops).toEqual(ops);
+  });
 });

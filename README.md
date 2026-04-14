@@ -1,6 +1,6 @@
 # remjs
 
-**v0.5.4** · [changelog](./CHANGELOG.md) · [live demo](https://rlyshw.github.io/remjs/mirror.html)
+**v0.5.5** · [changelog](./CHANGELOG.md) · [live demo](https://rlyshw.github.io/remjs/mirror.html)
 
 Event loop replication for JavaScript.
 
