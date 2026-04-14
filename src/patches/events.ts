@@ -92,7 +92,7 @@ function collectOnProps(proto: object): string[] {
  * IDL path that bypasses addEventListener entirely, so the recorder
  * never sees the events it fires.
  */
-function installIdlHandlerShim(): () => void {
+export function installIdlHandlerShim(): () => void {
   const stored = Symbol("remjs_idl_handler");
   const targets: Array<{ proto: object; names: string[]; origDescs: Map<string, { proto: object; desc: PropertyDescriptor }> }> = [];
 

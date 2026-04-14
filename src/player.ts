@@ -13,6 +13,7 @@
  */
 
 import type { Op, EventOp, TimerOp, NetworkOp, RandomOp, ClockOp, StorageOp, SnapshotOp } from "./ops.js";
+import { installIdlHandlerShim } from "./patches/events.js";
 
 export type ReplayMode = "temporal" | "instant";
 
@@ -24,8 +25,9 @@ export interface PlayerOptions {
    * matching TimerOps, fetch/oracle reads must be satisfied by ops.
    * Default false (0.4.x injection semantics). See epic #22.
    *
-   * 0.5.1: strict timers land. Other subsystems follow in 0.5.2+; under
-   * 0.5.1 the `strict: true` flag only affects the timer patch.
+   * 0.5.1: strict timers land. 0.5.2: strict events — native DOM events
+   * are filtered out unless the player is the one dispatching them.
+   * Further subsystems (oracles, pause) follow in 0.5.3+.
    */
   strict?: boolean;
   events?: boolean;
@@ -147,6 +149,18 @@ export function createPlayer(options: PlayerOptions = {}): Player {
   const strictTimers: Map<number, StrictTimer> = new Map();
   let strictNextSeq = 0;
 
+  // Strict-events state. `strictDispatching` is true while the player is
+  // synchronously dispatching an event (and its cascade). Under strict
+  // mode, trusted events only reach user handlers inside this window —
+  // which covers player-driven dispatches and any native cascade they
+  // trigger. Native events outside the window (user clicks on follower
+  // DOM, browser-synthesized events not originating from the player)
+  // get dropped.
+  let strictDispatching = false;
+  const origAddEventListener = typeof EventTarget !== "undefined" ? EventTarget.prototype.addEventListener : null;
+  const origRemoveEventListener = typeof EventTarget !== "undefined" ? EventTarget.prototype.removeEventListener : null;
+  let uninstallStrictEvents: (() => void) | null = null;
+
   let installed = false;
 
   function install(): void {
@@ -181,6 +195,59 @@ export function createPlayer(options: PlayerOptions = {}): Player {
     }
 
     if (strict && enableTimers) installStrictTimers();
+    if (strict && enableEvents) installStrictEvents();
+  }
+
+  function installStrictEvents(): void {
+    if (!origAddEventListener || !origRemoveEventListener) return;
+    const aEL = origAddEventListener;
+    const rEL = origRemoveEventListener;
+
+    // Orig-handler → wrapper map so removeEventListener finds the right
+    // wrapper. Listener identity is preserved from the caller's view.
+    const wrapperMap = new WeakMap<Function, EventListener>();
+
+    EventTarget.prototype.addEventListener = function (
+      type: string,
+      listener: EventListenerOrEventListenerObject | null,
+      options?: boolean | AddEventListenerOptions,
+    ) {
+      if (!listener) return aEL.call(this, type, listener, options);
+      const handler = typeof listener === "function" ? listener : listener.handleEvent.bind(listener);
+      let wrapper = wrapperMap.get(handler);
+      if (!wrapper) {
+        wrapper = function (this: EventTarget, event: Event) {
+          // Strict filter: drop trusted events that aren't inside a
+          // player-driven dispatch. Synthetic events (isTrusted=false)
+          // — including app-code dispatchEvent calls — always pass.
+          if (event.isTrusted && !strictDispatching) return;
+          return handler.call(this, event);
+        };
+        wrapperMap.set(handler, wrapper);
+      }
+      return aEL.call(this, type, wrapper, options);
+    };
+
+    EventTarget.prototype.removeEventListener = function (
+      type: string,
+      listener: EventListenerOrEventListenerObject | null,
+      options?: boolean | EventListenerOptions,
+    ) {
+      if (!listener) return rEL.call(this, type, listener, options);
+      const handler = typeof listener === "function" ? listener : listener.handleEvent.bind(listener);
+      const wrapper = wrapperMap.get(handler);
+      return rEL.call(this, type, (wrapper as EventListener) ?? listener, options);
+    };
+
+    // Route `el.onclick = fn` through our wrapped addEventListener so
+    // IDL handlers get the same filter.
+    const uninstallIdl = installIdlHandlerShim();
+
+    uninstallStrictEvents = () => {
+      uninstallIdl();
+      EventTarget.prototype.addEventListener = aEL;
+      EventTarget.prototype.removeEventListener = rEL;
+    };
   }
 
   function installStrictTimers(): void {
@@ -268,6 +335,19 @@ export function createPlayer(options: PlayerOptions = {}): Player {
     const target = document.querySelector(op.targetPath);
     if (!target) return;
 
+    // Mark this whole dispatch (and any synchronous cascade) as player-
+    // originated so the strict-events filter lets it through. Save and
+    // restore in case of reentrant apply.
+    const prevDispatching = strictDispatching;
+    strictDispatching = true;
+    try {
+      dispatchEventFromOp(op, target);
+    } finally {
+      strictDispatching = prevDispatching;
+    }
+  }
+
+  function dispatchEventFromOp(op: EventOp, target: Element): void {
     let event: Event;
     const d = op.detail;
 
@@ -456,6 +536,10 @@ export function createPlayer(options: PlayerOptions = {}): Player {
       if (origRIC) (globalThis as any).requestIdleCallback = origRIC;
       if (origCIC) (globalThis as any).cancelIdleCallback = origCIC;
       strictTimers.clear();
+    }
+    if (uninstallStrictEvents) {
+      uninstallStrictEvents();
+      uninstallStrictEvents = null;
     }
     randomQueue.length = 0;
     clockQueue.length = 0;

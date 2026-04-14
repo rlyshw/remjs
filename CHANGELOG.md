@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.5.2 — strict events (epic #22, milestone 2)
+
+Second slice of the strict-mode epic. Closes the native-event
+channel on the follower: trusted events (real user input, browser-
+synthesized cascades not originating from the player) no longer
+reach user handlers; only player-driven dispatches and user-code
+`dispatchEvent` calls do.
+
+The mechanism is a filter on the wrapped `addEventListener` —
+`event.isTrusted && !strictDispatching → drop`. `strictDispatching`
+is a flag the player sets around its own dispatch (covering the
+synchronous cascade that follows, so the browser's native
+`click → input → change` still works on replay). Synthetic events
+created by app code via `new Event(...)` carry `isTrusted = false`
+and always pass, keeping deterministic app-code side effects
+working on the follower.
+
+The IDL on-handler shim (0.3.1) is reused on the follower so
+`el.onclick = fn` registrations route through the wrapped
+`addEventListener` and get the same filter.
+
+### Added
+
+- **Strict-events installation** in `src/player.ts`. When
+  `strict: true` and events are enabled, wraps
+  `EventTarget.prototype.addEventListener` / `removeEventListener`
+  with a filter and installs the IDL shim.
+- **`strictDispatching` flag** — set true across the whole
+  `applyEvent` body (including `element.click()` activation path
+  and any synchronous cascade). Save/restore pattern handles
+  reentrant `apply()`.
+- **`installIdlHandlerShim` export** from `src/patches/events.ts`
+  so the player can reuse it on the follower.
+
+### Changed
+
+- **`applyEvent` split.** Dispatch body extracted into
+  `dispatchEventFromOp` so the strict flag can wrap the whole
+  critical section cleanly.
+
+### Notes
+
+- Handlers registered *before* the player installs are not wrapped.
+  Install the player before your app's event-listener setup runs.
+- `element.click()` from app code (not the player) is dropped by
+  the filter — the recorder captured the original click as an op
+  on the leader, so the op replay is the canonical invocation.
+  Double-firing the handler would diverge.
+
 ## 0.5.1 — strict timers (epic #22, milestone 1)
 
 First slice of the **strict mode** epic. The framework's thesis —

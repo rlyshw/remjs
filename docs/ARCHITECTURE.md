@@ -279,12 +279,46 @@ first timer registration breaks alignment and everything downstream.
 The larger-scope strict milestones (events, oracles) are what remove
 the remaining sources of pre-timer divergence.
 
-### Milestones 2–6
+### Strict events (0.5.2)
 
-Tracked under epic [#22]. Short form: events gated by `isTrusted`
-(0.5.2), native oracle fallback removed (0.5.3), pause/step primitive
-built on top of the strict tier (0.5.4), scoped capture for P2P
-(0.5.5), topology docs (0.5.6).
+The follower's `EventTarget.prototype.addEventListener` is wrapped:
+each registered listener is replaced with a thin wrapper that filters
+on `event.isTrusted && !strictDispatching`. `strictDispatching` is a
+player-owned flag, set `true` across the whole body of `applyEvent`
+— covering both the `dispatchEvent` call and the `element.click()`
+activation path. Any synchronous cascade triggered by the player's
+dispatch (e.g. `label` click → synthesized `input` click → `change`)
+runs inside the same flag window and passes through.
+
+Events outside that window fall into three cases:
+
+- **Native user input on the follower DOM** (`isTrusted=true`,
+  flag false) — dropped. The follower cannot produce handler
+  invocations from local input; only applied ops can.
+- **App-code `dispatchEvent(new Event(...))`** (`isTrusted=false`) —
+  passes. These are deterministic side effects of already-applied
+  ops; filtering them would diverge from the leader.
+- **App-code `element.click()`** (`isTrusted=true`, flag false) —
+  dropped. The leader's recorder captured the original click as an
+  op; the op replay is the canonical invocation. Letting the
+  follower's own `.click()` also fire would double-invoke the
+  handler and diverge.
+
+The IDL on-handler shim (0.3.1) is reused on the follower so
+`el.onclick = fn` routes through the wrapped `addEventListener` and
+inherits the same filter.
+
+**Installation order matters.** Handlers registered before the player
+installs are attached through the unwrapped native
+`addEventListener`, and the filter cannot reach them. Install the
+player before app code runs — typically at boot, before module
+imports that register listeners.
+
+### Milestones 3–6
+
+Tracked under epic [#22]. Short form: native oracle fallback removed
+(0.5.3), pause/step primitive built on top of the strict tier
+(0.5.4), scoped capture for P2P (0.5.5), topology docs (0.5.6).
 
 [#22]: https://github.com/rlyshw/remjs/issues/22
 

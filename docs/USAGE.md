@@ -167,9 +167,12 @@ rather than a silent one — which is the intended tradeoff.
 
 Strict mode is additive across versions:
 
-- **0.5.1** — timers. (this release)
-- **0.5.2** — events: gate native DOM dispatch; only
-  `player.apply`-dispatched events reach handlers.
+- **0.5.1** — timers.
+- **0.5.2** — events: trusted DOM events (native user input, native
+  cascades outside player dispatch) are filtered out at
+  `addEventListener`. Synthetic events from app code (`new Event`)
+  still pass so deterministic side effects work. IDL handlers
+  (`el.onclick = fn`) get the same filter. *(this release)*
 - **0.5.3** — oracles: `Math.random` / `Date.now` /
   `localStorage.getItem` throw on empty queue instead of falling
   through to native.

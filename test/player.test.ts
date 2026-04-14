@@ -315,6 +315,101 @@ describe("player", () => {
       player.destroy();
     });
 
+    it("destroy restores addEventListener/removeEventListener when strict events are on", () => {
+      const origAEL = EventTarget.prototype.addEventListener;
+      const origREL = EventTarget.prototype.removeEventListener;
+
+      const player = createPlayer({
+        strict: true,
+        timers: false, network: false, random: false, clock: false, storage: false,
+      });
+      player.apply([]);
+      expect(EventTarget.prototype.addEventListener).not.toBe(origAEL);
+
+      player.destroy();
+      expect(EventTarget.prototype.addEventListener).toBe(origAEL);
+      expect(EventTarget.prototype.removeEventListener).toBe(origREL);
+    });
+
+    it("strict events: synthetic (isTrusted=false) event reaches handler", () => {
+      const player = createPlayer({
+        strict: true,
+        timers: false, network: false, random: false, clock: false, storage: false,
+      });
+      player.apply([]);
+
+      const target = new EventTarget();
+      let fired = 0;
+      target.addEventListener("ping", () => { fired++; });
+
+      target.dispatchEvent(new Event("ping"));
+      expect(fired).toBe(1); // isTrusted is false by construction → passes
+
+      player.destroy();
+    });
+
+    it("strict events: simulated trusted event is dropped outside player dispatch", () => {
+      const player = createPlayer({
+        strict: true,
+        timers: false, network: false, random: false, clock: false, storage: false,
+      });
+      player.apply([]);
+
+      const target = new EventTarget();
+      let fired = 0;
+      target.addEventListener("ping", () => { fired++; });
+
+      // Fake a trusted native event: isTrusted is read-only true only for
+      // UA-dispatched events, but we can subclass to simulate.
+      class TrustedEvent extends Event {
+        get isTrusted() { return true; }
+      }
+      target.dispatchEvent(new TrustedEvent("ping"));
+      expect(fired).toBe(0); // trusted + no player dispatching → dropped
+
+      player.destroy();
+    });
+
+    it("strict events: removeEventListener correctly unregisters wrapped handler", () => {
+      const player = createPlayer({
+        strict: true,
+        timers: false, network: false, random: false, clock: false, storage: false,
+      });
+      player.apply([]);
+
+      const target = new EventTarget();
+      let fired = 0;
+      const handler = () => { fired++; };
+      target.addEventListener("ping", handler);
+      target.dispatchEvent(new Event("ping"));
+      expect(fired).toBe(1);
+
+      target.removeEventListener("ping", handler);
+      target.dispatchEvent(new Event("ping"));
+      expect(fired).toBe(1); // not incremented — removed
+
+      player.destroy();
+    });
+
+    it("non-strict: isTrusted events reach handler as usual", () => {
+      const player = createPlayer({
+        timers: false, network: false, random: false, clock: false, storage: false,
+      });
+      player.apply([]);
+
+      const target = new EventTarget();
+      let fired = 0;
+      target.addEventListener("ping", () => { fired++; });
+
+      class TrustedEvent extends Event {
+        get isTrusted() { return true; }
+      }
+      target.dispatchEvent(new TrustedEvent("ping"));
+      expect(fired).toBe(1); // non-strict: no filter
+
+      player.destroy();
+    });
+
     it("destroy restores setTimeout/setInterval/clearTimeout/clearInterval", () => {
       const origST = globalThis.setTimeout;
       const origSI = globalThis.setInterval;
