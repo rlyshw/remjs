@@ -47,7 +47,9 @@ replay immediately.
 
 A remjs stream is a sequence of **op batches**. Each batch is an array
 of one or more ops. The recorder batches emitted ops between flushes
-(default: microtask); the player applies each batch in array order.
+(default: next event-loop task, so one batch contains one task plus
+its microtask drain — see `ARCHITECTURE.md`); the player applies each
+batch in array order.
 
 There is no framing at the wire level. Transport (WebSocket,
 postMessage, HTTP, in-process callback) is responsible for delivering
@@ -144,9 +146,12 @@ order on replicas that drift).
 | `headers` | Response headers as a flat object (optional)        |
 | `body`    | Response body as a string, or `null` for no body    |
 
-The player replaces `globalThis.fetch` so calls matching a queued
-network op's URL return the recorded response instead of hitting the
-real network. Unmatched requests fall through to the original fetch.
+The player replaces `globalThis.fetch` so calls return a Promise that
+resolves when the matching `NetworkOp` arrives (via the player's async-
+oracle protocol, see `ARCHITECTURE.md`). There is no native fallback in
+0.4.0+: a follower-side `fetch` with no matching leader op hangs until
+one arrives, or rejects on `destroy()`. Hanging is safer than silently
+diverging.
 
 ### `random` — Non-determinism: randomness
 
