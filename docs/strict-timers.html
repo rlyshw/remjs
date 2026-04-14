@@ -1,0 +1,1602 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>remjs · strict timers (0.5.1)</title>
+<style>
+  :root {
+    --bg: #0d1017; --panel: #141924; --panel2: #0f1320; --ink: #e6edf3;
+    --muted: #8b98a5; --dim: #5d6b7a; --accent: #6fa8dc; --ok: #7fcf73;
+    --warn: #f0a04a; --bad: #e06767; --border: #2a3344; --hit: #f0c040;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink);
+    font-family: ui-sans-serif, system-ui, sans-serif; font-size: 13px; }
+  body { max-width: 1200px; margin: 0 auto; padding: 20px; }
+  h1 { margin: 0 0 4px; font-size: 20px; font-weight: 600; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 16px; line-height: 1.5; }
+  .sub code { background: #1a2030; padding: 1px 6px; border-radius: 4px; color: var(--accent);
+    font-family: ui-monospace, monospace; font-size: 12px; }
+
+  .controls { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+  button { background: var(--panel); border: 1px solid var(--border); color: var(--ink);
+    padding: 7px 14px; border-radius: 6px; font-size: 12px; cursor: pointer;
+    font-family: inherit; transition: background 0.15s; }
+  button:hover:not(:disabled) { background: #1a2030; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.primary { background: var(--accent); color: #0d1017; border-color: var(--accent); font-weight: 600; }
+  button.primary:hover:not(:disabled) { background: #8fbbe0; }
+
+  /* Channel strip */
+  .channel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 16px; margin-bottom: 16px; display: flex; align-items: center; gap: 14px; }
+  .channel.paused { border-color: var(--warn); }
+  .channel-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--muted); font-weight: 600; min-width: 90px; }
+  .channel-inflight { flex: 1; font-family: ui-monospace, monospace; font-size: 12px;
+    color: var(--dim); min-height: 20px; overflow: hidden; white-space: nowrap;
+    text-overflow: ellipsis; }
+  .channel-inflight .op-live { color: var(--accent); animation: flash 0.6s ease-out; }
+  .channel.paused .channel-inflight { color: var(--warn); }
+  @keyframes flash { 0% { color: var(--hit); } 100% { color: var(--accent); } }
+  .channel-badge { background: #1a2030; border: 1px solid var(--border); border-radius: 4px;
+    padding: 3px 10px; font-size: 11px; color: var(--muted); font-family: ui-monospace, monospace;
+    font-variant-numeric: tabular-nums; }
+  .channel.paused .channel-badge { color: var(--warn); border-color: var(--warn); }
+
+  /* Runtime panels */
+  .panels { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin-bottom: 16px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 14px; display: flex; flex-direction: column; min-height: 320px; }
+  .panel h2 { font-size: 12px; font-weight: 600; margin: 0 0 2px;
+    letter-spacing: 0.04em; text-transform: uppercase; }
+  .panel.leader h2 { color: var(--accent); }
+  .panel.native h2 { color: var(--warn); }
+  .panel.strict h2 { color: var(--ok); }
+  .panel .role { font-size: 11px; color: var(--muted); margin-bottom: 10px;
+    font-family: ui-monospace, monospace; }
+
+  .section-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--dim); font-weight: 600; margin: 10px 0 6px; }
+
+  /* Registry table */
+  .registry { background: var(--panel2); border: 1px solid var(--border); border-radius: 4px;
+    font-family: ui-monospace, monospace; font-size: 11px; overflow: hidden;
+    flex: 1; display: flex; flex-direction: column; }
+  .registry-head, .registry-row { display: grid;
+    grid-template-columns: 38px 62px 1fr 46px; gap: 8px; padding: 5px 8px; align-items: center; }
+  .registry-head { background: #0a0e18; color: var(--dim); font-size: 10px;
+    text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 1px solid var(--border); }
+  .registry-row { border-bottom: 1px solid #1a2030; transition: background 0.3s; }
+  .registry-row:last-child { border-bottom: none; }
+  .registry-row.hit { background: rgba(240, 192, 64, 0.15); }
+  .registry-row .seq { color: var(--accent); font-variant-numeric: tabular-nums; }
+  .registry-row .kind { color: var(--ink); }
+  .registry-row .cb { color: var(--muted); overflow: hidden; white-space: nowrap;
+    text-overflow: ellipsis; }
+  .registry-row .fires { color: var(--ok); text-align: right;
+    font-variant-numeric: tabular-nums; font-weight: 600; }
+  .registry-row.empty { color: var(--dim); font-style: italic;
+    grid-template-columns: 1fr; padding: 12px; text-align: center; }
+  .registry-footer { padding: 6px 8px; font-size: 10px; color: var(--dim);
+    border-top: 1px solid var(--border); background: #0a0e18;
+    display: flex; justify-content: space-between; }
+
+  .note { font-size: 11px; color: var(--muted); margin-top: 8px; line-height: 1.5;
+    padding: 8px 10px; background: #0a0e18; border-radius: 4px; border-left: 2px solid var(--border); }
+  .panel.native .note { border-left-color: var(--warn); }
+  .panel.strict .note { border-left-color: var(--ok); }
+  .panel.leader .note { border-left-color: var(--accent); }
+
+  /* Op log */
+  .oplog-wrap { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 14px; }
+  .oplog-wrap h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--muted); font-weight: 600; margin: 0 0 8px; }
+  .oplog { font-family: ui-monospace, monospace; font-size: 11px; height: 140px;
+    overflow-y: auto; background: var(--panel2); border-radius: 4px; padding: 8px; }
+  .oplog-entry { color: var(--muted); margin-bottom: 2px; }
+  .oplog-entry .t { color: var(--accent); }
+  .oplog-entry .seq-val { color: var(--hit); }
+  .oplog-entry.dropped { color: var(--bad); text-decoration: line-through; }
+  .oplog-entry.delivered-late { color: var(--ok); }
+</style>
+</head>
+<body>
+  <h1>Strict timers (remjs 0.5.1) — state machine view</h1>
+  <p class="sub">
+    Each runtime is a state machine. Its state here is the <strong>callback registry</strong>
+    (seq → callback) plus the fire-count per slot. Below: leader's recorder registry,
+    non-strict follower's registry (empty — it uses native timers), strict follower's
+    registry (gated by ops). An op arriving at a runtime increments the matching slot's
+    fire count. Pause the channel to see strict stop transitioning while non-strict keeps
+    going on its own.
+  </p>
+
+  <div class="controls">
+    <button id="start" class="primary">Start</button>
+    <button id="pause" disabled>Pause channel</button>
+    <button id="resume" disabled>Resume channel</button>
+    <button id="stop" disabled>Stop</button>
+  </div>
+
+  <div class="channel" id="channel">
+    <div class="channel-label">Op channel</div>
+    <div class="channel-inflight" id="channel-inflight">—</div>
+    <div class="channel-badge" id="channel-state">IDLE</div>
+  </div>
+
+  <div class="panels">
+    <div class="panel leader">
+      <h2>Leader runtime</h2>
+      <div class="role">recorder — emits TimerOps</div>
+      <div class="section-label">Recorder registry (seqMap)</div>
+      <div class="registry" id="leader-reg">
+        <div class="registry-head"><div>seq</div><div>kind</div><div>callback</div><div>fires</div></div>
+        <div id="leader-reg-rows"></div>
+        <div class="registry-footer">
+          <span id="leader-reg-size">0 slots</span>
+          <span id="leader-reg-emitted">0 emitted</span>
+        </div>
+      </div>
+      <div class="note">Native setInterval/setTimeout fire; recorder stamps each fire with the slot's seq and emits a TimerOp.</div>
+    </div>
+
+    <div class="panel native">
+      <h2>Follower A · non-strict</h2>
+      <div class="role">createPlayer({})</div>
+      <div class="section-label">Registry state</div>
+      <div class="registry" id="native-reg">
+        <div class="registry-head"><div>seq</div><div>kind</div><div>callback</div><div>fires</div></div>
+        <div id="native-reg-rows"><div class="registry-row empty">no registry — native timers run underneath</div></div>
+        <div class="registry-footer">
+          <span id="native-counter">native fires: 0</span>
+          <span id="native-received">0 ops received</span>
+        </div>
+      </div>
+      <div class="note">Non-strict player doesn't patch timers. The follower's own native setInterval fires independently; incoming TimerOps are no-ops.</div>
+    </div>
+
+    <div class="panel strict">
+      <h2>Follower B · strict</h2>
+      <div class="role">createPlayer({ strict: true })</div>
+      <div class="section-label">strictTimers map</div>
+      <div class="registry" id="strict-reg">
+        <div class="registry-head"><div>seq</div><div>kind</div><div>callback</div><div>fires</div></div>
+        <div id="strict-reg-rows"></div>
+        <div class="registry-footer">
+          <span id="strict-reg-size">0 slots</span>
+          <span id="strict-reg-applied">0 applied</span>
+        </div>
+      </div>
+      <div class="note">setInterval/setTimeout register against a seq but never schedule native. Incoming TimerOp looks up its seq and invokes that callback; one-shots are deleted, intervals stay.</div>
+    </div>
+  </div>
+
+  <div class="oplog-wrap">
+    <h3>Op log (newest first) — <span id="oplog-legend" style="color: var(--muted); text-transform: none; letter-spacing: 0; font-weight: 400;">delivered · <span style="color: var(--bad);">dropped (channel paused)</span> · <span style="color: var(--ok);">delivered late</span></span></h3>
+    <div class="oplog" id="oplog"></div>
+  </div>
+
+  <script>
+(function(){"use strict";
+/**
+ * remjs v0.3 — Event Loop Op Protocol
+ *
+ * Each op captures one event loop input: something that entered the JS
+ * runtime from the environment. The complete input surface is covered:
+ * DOM events, timer fires, network responses, non-deterministic values
+ * (random, clock), storage access, and navigation.
+ *
+ * All ops are plain JSON — no tagged values, no __remjs encoding.
+ * The event loop input surface is made of primitives, strings, and
+ * simple structures that survive JSON round-trip without special handling.
+ *
+ * Every op carries an optional `ts` field — the wall clock time
+ * (performance.now or Date.now) when the op was recorded. This enables
+ * temporal replay: ops are replayed at their original cadence rather
+ * than all at once.
+ */
+
+/**
+ * remjs v0.3 — Codec
+ *
+ * Ops are plain JSON — no special encoding needed. The codec is a thin
+ * abstraction so transport layers can swap in msgpack or protobuf later.
+ */
+const jsonCodec = {
+    encode(op) {
+        return JSON.stringify(op);
+    },
+    decode(data) {
+        return JSON.parse(data);
+    },
+    encodeBatch(ops) {
+        return JSON.stringify(ops);
+    },
+    decodeBatch(data) {
+        return JSON.parse(data);
+    },
+};
+
+/**
+ * Clock patch — intercepts Date.now() and performance.now().
+ *
+ * Records the actual value returned so replicas produce identical
+ * timestamps without needing synchronized clocks.
+ */
+function installClockPatch(emit) {
+    const origDateNow = Date.now;
+    const origPerfNow = typeof performance !== "undefined" ? performance.now.bind(performance) : null;
+    Date.now = function () {
+        const value = origDateNow.call(Date);
+        emit({ type: "clock", source: "dateNow", value });
+        return value;
+    };
+    if (origPerfNow && typeof performance !== "undefined") {
+        performance.now = function () {
+            const value = origPerfNow();
+            emit({ type: "clock", source: "performanceNow", value });
+            return value;
+        };
+    }
+    return function uninstall() {
+        Date.now = origDateNow;
+        if (origPerfNow && typeof performance !== "undefined") {
+            performance.now = origPerfNow;
+        }
+    };
+}
+
+/**
+ * Random patch — intercepts Math.random() and crypto.getRandomValues().
+ *
+ * Records the actual values returned so replicas produce identical
+ * "random" sequences.
+ */
+function installRandomPatch(emit) {
+    const origRandom = Math.random;
+    const origCrypto = typeof globalThis.crypto !== "undefined" &&
+        typeof globalThis.crypto.getRandomValues === "function"
+        ? globalThis.crypto.getRandomValues.bind(globalThis.crypto)
+        : null;
+    Math.random = function () {
+        const value = origRandom();
+        emit({ type: "random", source: "math", values: [value] });
+        return value;
+    };
+    if (origCrypto && typeof globalThis.crypto !== "undefined") {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        globalThis.crypto.getRandomValues = function (array) {
+            const result = origCrypto(array);
+            if (result && ArrayBuffer.isView(result)) {
+                const values = Array.from(new Uint8Array(result.buffer, result.byteOffset, result.byteLength));
+                emit({ type: "random", source: "crypto", values });
+            }
+            return result;
+        };
+    }
+    return function uninstall() {
+        Math.random = origRandom;
+        if (origCrypto && typeof globalThis.crypto !== "undefined") {
+            globalThis.crypto.getRandomValues = origCrypto;
+        }
+    };
+}
+
+/**
+ * Timer patch — intercepts setTimeout, setInterval, rAF, rIC (and
+ * their clear/cancel variants).
+ *
+ * Assigns monotonic sequence numbers so leader and follower can match
+ * timer registrations without sharing raw browser timer IDs.
+ * Records a TimerOp when the callback actually fires.
+ *
+ * rAF and rIC are browser-only; the patch skips them in environments
+ * where they're undefined (Node tests).
+ */
+function installTimerPatch(emit) {
+    const origSetTimeout = globalThis.setTimeout;
+    const origSetInterval = globalThis.setInterval;
+    const origClearTimeout = globalThis.clearTimeout;
+    const origClearInterval = globalThis.clearInterval;
+    const origRAF = typeof requestAnimationFrame === "function" ? requestAnimationFrame : null;
+    const origCAF = typeof cancelAnimationFrame === "function" ? cancelAnimationFrame : null;
+    const origRIC = typeof globalThis.requestIdleCallback === "function" ? globalThis.requestIdleCallback : null;
+    const origCIC = typeof globalThis.cancelIdleCallback === "function" ? globalThis.cancelIdleCallback : null;
+    const patchState = {
+        seqMap: new Map(),
+        callbackMap: new Map(),
+        nextSeq: 0,
+    };
+    globalThis.setTimeout = function (callback, delay, ...args) {
+        const seq = patchState.nextSeq++;
+        const fn = typeof callback === "string" ? () => eval(callback) : callback;
+        const rawId = origSetTimeout.call(globalThis, (...cbArgs) => {
+            patchState.seqMap.delete(rawId);
+            patchState.callbackMap.delete(seq);
+            emit({
+                type: "timer",
+                kind: "timeout",
+                seq,
+                scheduledDelay: delay ?? 0,
+                actualTime: Date.now(),
+            });
+            fn(...cbArgs);
+        }, delay, ...args);
+        patchState.seqMap.set(rawId, seq);
+        patchState.callbackMap.set(seq, fn);
+        return rawId;
+    };
+    globalThis.setInterval = function (callback, delay, ...args) {
+        const seq = patchState.nextSeq++;
+        const fn = typeof callback === "string" ? () => eval(callback) : callback;
+        const rawId = origSetInterval.call(globalThis, (...cbArgs) => {
+            emit({
+                type: "timer",
+                kind: "interval",
+                seq,
+                scheduledDelay: delay ?? 0,
+                actualTime: Date.now(),
+            });
+            fn(...cbArgs);
+        }, delay, ...args);
+        patchState.seqMap.set(rawId, seq);
+        patchState.callbackMap.set(seq, fn);
+        return rawId;
+    };
+    globalThis.clearTimeout = function (id) {
+        if (id !== undefined) {
+            const seq = patchState.seqMap.get(id);
+            if (seq !== undefined) {
+                patchState.seqMap.delete(id);
+                patchState.callbackMap.delete(seq);
+            }
+        }
+        origClearTimeout.call(globalThis, id);
+    };
+    globalThis.clearInterval = function (id) {
+        if (id !== undefined) {
+            const seq = patchState.seqMap.get(id);
+            if (seq !== undefined) {
+                patchState.seqMap.delete(id);
+                patchState.callbackMap.delete(seq);
+            }
+        }
+        origClearInterval.call(globalThis, id);
+    };
+    if (origRAF) {
+        globalThis.requestAnimationFrame = function (callback) {
+            const seq = patchState.nextSeq++;
+            const rawId = origRAF.call(globalThis, (ts) => {
+                patchState.seqMap.delete(rawId);
+                patchState.callbackMap.delete(seq);
+                emit({
+                    type: "timer",
+                    kind: "raf",
+                    seq,
+                    scheduledDelay: 0,
+                    actualTime: ts,
+                });
+                callback(ts);
+            });
+            patchState.seqMap.set(rawId, seq);
+            patchState.callbackMap.set(seq, callback);
+            return rawId;
+        };
+        globalThis.cancelAnimationFrame = function (id) {
+            const seq = patchState.seqMap.get(id);
+            if (seq !== undefined) {
+                patchState.seqMap.delete(id);
+                patchState.callbackMap.delete(seq);
+            }
+            origCAF.call(globalThis, id);
+        };
+    }
+    if (origRIC) {
+        globalThis.requestIdleCallback = function (callback, opts) {
+            const seq = patchState.nextSeq++;
+            const rawId = origRIC.call(globalThis, (deadline) => {
+                patchState.seqMap.delete(rawId);
+                patchState.callbackMap.delete(seq);
+                emit({
+                    type: "timer",
+                    kind: "idle",
+                    seq,
+                    scheduledDelay: 0,
+                    actualTime: Date.now(),
+                });
+                callback(deadline);
+            }, opts);
+            patchState.seqMap.set(rawId, seq);
+            patchState.callbackMap.set(seq, callback);
+            return rawId;
+        };
+        globalThis.cancelIdleCallback = function (id) {
+            const seq = patchState.seqMap.get(id);
+            if (seq !== undefined) {
+                patchState.seqMap.delete(id);
+                patchState.callbackMap.delete(seq);
+            }
+            origCIC.call(globalThis, id);
+        };
+    }
+    function uninstall() {
+        globalThis.setTimeout = origSetTimeout;
+        globalThis.setInterval = origSetInterval;
+        globalThis.clearTimeout = origClearTimeout;
+        globalThis.clearInterval = origClearInterval;
+        if (origRAF)
+            globalThis.requestAnimationFrame = origRAF;
+        if (origCAF)
+            globalThis.cancelAnimationFrame = origCAF;
+        if (origRIC)
+            globalThis.requestIdleCallback = origRIC;
+        if (origCIC)
+            globalThis.cancelIdleCallback = origCIC;
+        patchState.seqMap.clear();
+        patchState.callbackMap.clear();
+    }
+    return { uninstall, state: patchState };
+}
+
+/**
+ * Network patch — intercepts fetch().
+ *
+ * Assigns monotonic sequence numbers to each request. Records the
+ * response (status, content-type header, text body) when it resolves.
+ * XMLHttpRequest interception deferred to a future patch.
+ */
+function installNetworkPatch(emit) {
+    const origFetch = globalThis.fetch;
+    let nextSeq = 0;
+    globalThis.fetch = async function (input, init) {
+        const seq = nextSeq++;
+        const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        const method = init?.method ?? "GET";
+        const response = await origFetch.call(globalThis, input, init);
+        // Clone so we can read the body without consuming the original
+        const clone = response.clone();
+        let body = null;
+        try {
+            body = await clone.text();
+        }
+        catch {
+            body = null;
+        }
+        emit({
+            type: "network",
+            kind: "fetch",
+            seq,
+            url,
+            method,
+            status: response.status,
+            headers: { "content-type": response.headers.get("content-type") ?? "" },
+            body,
+        });
+        return response;
+    };
+    return function uninstall() {
+        globalThis.fetch = origFetch;
+    };
+}
+
+/**
+ * Storage patch — intercepts localStorage and sessionStorage.
+ *
+ * Records get/set/remove operations so replicas have identical
+ * storage state without needing shared persistence.
+ */
+function patchStorage(storage, kind, emit) {
+    const origGetItem = storage.getItem.bind(storage);
+    const origSetItem = storage.setItem.bind(storage);
+    const origRemoveItem = storage.removeItem.bind(storage);
+    storage.getItem = function (key) {
+        const value = origGetItem(key);
+        emit({ type: "storage", kind, action: "get", key, value });
+        return value;
+    };
+    storage.setItem = function (key, value) {
+        origSetItem(key, value);
+        emit({ type: "storage", kind, action: "set", key, value });
+    };
+    storage.removeItem = function (key) {
+        origRemoveItem(key);
+        emit({ type: "storage", kind, action: "remove", key, value: null });
+    };
+    return function uninstall() {
+        storage.getItem = origGetItem;
+        storage.setItem = origSetItem;
+        storage.removeItem = origRemoveItem;
+    };
+}
+function installStoragePatch(emit) {
+    const uninstallers = [];
+    if (typeof globalThis.localStorage !== "undefined") {
+        uninstallers.push(patchStorage(globalThis.localStorage, "local", emit));
+    }
+    if (typeof globalThis.sessionStorage !== "undefined") {
+        uninstallers.push(patchStorage(globalThis.sessionStorage, "session", emit));
+    }
+    return function uninstall() {
+        for (const fn of uninstallers)
+            fn();
+    };
+}
+
+/**
+ * Element targeting — generates deterministic CSS selector paths.
+ *
+ * Given a DOM element, produces a selector string that uniquely
+ * identifies it in the document. Uses tag#id when available,
+ * falls back to tag:nth-child(n) ancestry chains.
+ */
+function getTargetPath(element) {
+    if (element === document.documentElement)
+        return "html";
+    if (element === document.body)
+        return "body";
+    const parts = [];
+    let current = element;
+    while (current && current !== document.documentElement) {
+        const tag = current.tagName.toLowerCase();
+        if (current.id) {
+            parts.unshift(`${tag}#${current.id}`);
+            break;
+        }
+        const parent = current.parentElement;
+        if (!parent) {
+            parts.unshift(tag);
+            break;
+        }
+        const siblings = Array.from(parent.children);
+        const sameTag = siblings.filter((s) => s.tagName === current.tagName);
+        if (sameTag.length === 1) {
+            parts.unshift(tag);
+        }
+        else {
+            const index = sameTag.indexOf(current) + 1;
+            parts.unshift(`${tag}:nth-of-type(${index})`);
+        }
+        current = parent;
+    }
+    return parts.join(" > ");
+}
+function resolveTargetPath(path) {
+    try {
+        return document.querySelector(path);
+    }
+    catch {
+        return null;
+    }
+}
+
+/**
+ * Event patch — intercepts addEventListener to record DOM events.
+ *
+ * When a registered event handler fires, records an EventOp with
+ * the target's CSS selector path and event-specific details.
+ */
+
+/** Extract serializable details from a DOM event. */
+function extractDetail(event) {
+    const detail = {};
+    if (typeof PointerEvent !== "undefined" && event instanceof PointerEvent) {
+        detail.clientX = event.clientX;
+        detail.clientY = event.clientY;
+        detail.button = event.button;
+        detail.buttons = event.buttons;
+        detail.pointerId = event.pointerId;
+    }
+    else if (event instanceof MouseEvent) {
+        detail.clientX = event.clientX;
+        detail.clientY = event.clientY;
+        detail.button = event.button;
+        detail.buttons = event.buttons;
+    }
+    if (event instanceof KeyboardEvent) {
+        detail.key = event.key;
+        detail.code = event.code;
+        detail.altKey = event.altKey;
+        detail.ctrlKey = event.ctrlKey;
+        detail.shiftKey = event.shiftKey;
+        detail.metaKey = event.metaKey;
+    }
+    if (event instanceof InputEvent) {
+        detail.data = event.data;
+        detail.inputType = event.inputType;
+    }
+    // Capture input/textarea/select value for input/change events
+    if ((event.type === "input" || event.type === "change") &&
+        event.target &&
+        "value" in event.target) {
+        detail.value = event.target.value;
+    }
+    if (event.type === "scroll" && event.target) {
+        const el = event.target;
+        detail.scrollTop = el.scrollTop;
+        detail.scrollLeft = el.scrollLeft;
+        // Percentage form so replays on different viewport sizes land at the
+        // same logical position (e.g. "50% down") instead of being clamped.
+        const maxTop = el.scrollHeight - el.clientHeight;
+        const maxLeft = el.scrollWidth - el.clientWidth;
+        detail.scrollTopPct = maxTop > 0 ? el.scrollTop / maxTop : 0;
+        detail.scrollLeftPct = maxLeft > 0 ? el.scrollLeft / maxLeft : 0;
+    }
+    return detail;
+}
+/**
+ * Collect on-event property names from a prototype (e.g. "onclick").
+ * Walks the prototype chain since most live on GlobalEventHandlers.prototype.
+ */
+function collectOnProps(proto) {
+    const names = new Set();
+    let cur = proto;
+    while (cur && cur !== Object.prototype) {
+        for (const name of Object.getOwnPropertyNames(cur)) {
+            if (name.startsWith("on") && name.length > 2) {
+                const desc = Object.getOwnPropertyDescriptor(cur, name);
+                if (desc && (desc.set || desc.get))
+                    names.add(name);
+            }
+        }
+        cur = Object.getPrototypeOf(cur);
+    }
+    return [...names];
+}
+/**
+ * Shim IDL on-event handlers (el.onclick = fn) so they route through
+ * addEventListener — which our patched version records.
+ *
+ * Without this, el.onclick = fn installs a handler via the single-slot
+ * IDL path that bypasses addEventListener entirely, so the recorder
+ * never sees the events it fires.
+ */
+function installIdlHandlerShim() {
+    const stored = Symbol("remjs_idl_handler");
+    const targets = [];
+    const protos = [];
+    if (typeof HTMLElement !== "undefined")
+        protos.push(HTMLElement.prototype);
+    if (typeof Document !== "undefined")
+        protos.push(Document.prototype);
+    if (typeof Window !== "undefined")
+        protos.push(Window.prototype);
+    for (const proto of protos) {
+        const names = collectOnProps(proto);
+        const origDescs = new Map();
+        for (const name of names) {
+            // Find the prototype that actually owns the descriptor.
+            let owner = proto;
+            let desc;
+            while (owner) {
+                desc = Object.getOwnPropertyDescriptor(owner, name);
+                if (desc)
+                    break;
+                owner = Object.getPrototypeOf(owner);
+            }
+            if (!desc || !owner)
+                continue;
+            origDescs.set(name, { proto: owner, desc });
+            const eventType = name.slice(2);
+            Object.defineProperty(proto, name, {
+                configurable: true,
+                enumerable: true,
+                get() {
+                    const bag = this[stored];
+                    return (bag && bag[name]) ?? null;
+                },
+                set(fn) {
+                    let bag = this[stored];
+                    if (!bag) {
+                        bag = {};
+                        Object.defineProperty(this, stored, { value: bag, configurable: true, enumerable: false, writable: true });
+                    }
+                    const prev = bag[name];
+                    if (prev)
+                        this.removeEventListener(eventType, prev);
+                    const next = typeof fn === "function" ? fn : null;
+                    bag[name] = next;
+                    if (next)
+                        this.addEventListener(eventType, next);
+                },
+            });
+        }
+        targets.push({ proto, names, origDescs });
+    }
+    return function uninstallIdl() {
+        for (const { proto, names, origDescs } of targets) {
+            for (const name of names) {
+                const orig = origDescs.get(name);
+                if (!orig) {
+                    delete proto[name];
+                    continue;
+                }
+                if (orig.proto === proto) {
+                    Object.defineProperty(proto, name, orig.desc);
+                }
+                else {
+                    // Descriptor was inherited — remove our override so inheritance resumes.
+                    delete proto[name];
+                }
+            }
+        }
+    };
+}
+function installEventPatch(emit) {
+    const origAddEventListener = EventTarget.prototype.addEventListener;
+    const origRemoveEventListener = EventTarget.prototype.removeEventListener;
+    // Track wrapped handlers so removeEventListener works correctly
+    const wrapperMap = new WeakMap();
+    // Dispatch depth: when a handler synchronously triggers a cascading
+    // event (e.g. label click → synthesized input click → change), the
+    // browser invokes listeners for those derived events while we are
+    // still inside the outer handler. Those should NOT be recorded — the
+    // follower's browser will cascade naturally when the outer event
+    // replays. Depth > 0 means we're inside a user-supplied handler.
+    let dispatchDepth = 0;
+    // Dedup: a single Event object can hit multiple listeners (capture,
+    // target, bubble). Emit it at most once per original dispatch.
+    const seenEvents = new WeakSet();
+    EventTarget.prototype.addEventListener = function (type, listener, options) {
+        if (!listener) {
+            return origAddEventListener.call(this, type, listener, options);
+        }
+        const handler = typeof listener === "function" ? listener : listener.handleEvent.bind(listener);
+        const self = this;
+        const wrapper = function (event) {
+            if (dispatchDepth === 0 &&
+                event.target instanceof Element &&
+                !seenEvents.has(event)) {
+                seenEvents.add(event);
+                emit({
+                    type: "event",
+                    eventType: event.type,
+                    targetPath: getTargetPath(event.target),
+                    timestamp: event.timeStamp,
+                    detail: extractDetail(event),
+                });
+            }
+            dispatchDepth++;
+            try {
+                return handler.call(this, event);
+            }
+            finally {
+                dispatchDepth--;
+            }
+        };
+        wrapperMap.set(handler, wrapper);
+        return origAddEventListener.call(self, type, wrapper, options);
+    };
+    EventTarget.prototype.removeEventListener = function (type, listener, options) {
+        if (!listener) {
+            return origRemoveEventListener.call(this, type, listener, options);
+        }
+        const handler = typeof listener === "function" ? listener : listener.handleEvent.bind(listener);
+        const wrapper = wrapperMap.get(handler);
+        if (wrapper) {
+            wrapperMap.delete(handler);
+            return origRemoveEventListener.call(this, type, wrapper, options);
+        }
+        return origRemoveEventListener.call(this, type, listener, options);
+    };
+    const uninstallIdl = installIdlHandlerShim();
+    return function uninstall() {
+        uninstallIdl();
+        EventTarget.prototype.addEventListener = origAddEventListener;
+        EventTarget.prototype.removeEventListener = origRemoveEventListener;
+    };
+}
+
+/**
+ * Recorder — captures event loop inputs as ops.
+ *
+ * Installs monkey-patches on enabled subsystems (events, timers,
+ * network, random, clock, storage), batches emitted ops, and
+ * delivers them via the onOps callback.
+ */
+function createRecorder(options) {
+    const { onOps, batchMode = "task", events: enableEvents = true, timers: enableTimers = true, network: enableNetwork = true, random: enableRandom = true, clock: enableClock = true, storage: enableStorage = true, } = options;
+    let pending = [];
+    let scheduled = false;
+    let running = false;
+    const uninstallers = [];
+    const flush = () => {
+        scheduled = false;
+        if (pending.length === 0)
+            return;
+        const batch = pending;
+        pending = [];
+        onOps(batch);
+    };
+    const schedule = () => {
+        if (scheduled || !running)
+            return;
+        scheduled = true;
+        if (batchMode === "sync") {
+            flush();
+        }
+        else if (batchMode === "raf" && typeof requestAnimationFrame === "function") {
+            requestAnimationFrame(flush);
+        }
+        else if (batchMode === "microtask") {
+            queueMicrotask(flush);
+        }
+        else {
+            // "task" — setTimeout(fn, 0) schedules a new task per HTML spec,
+            // which runs after the current task's microtask checkpoint.
+            setTimeout(flush, 0);
+        }
+    };
+    // Capture the ORIGINAL time functions BEFORE patches are installed,
+    // so timestamping ops doesn't recurse through the clock patch.
+    const origPerfNow = typeof performance !== "undefined"
+        ? performance.now.bind(performance) : null;
+    const origDateNow = Date.now;
+    const getTime = origPerfNow ?? (() => origDateNow.call(Date));
+    const emit = (op) => {
+        if (!running)
+            return;
+        op.ts = getTime();
+        pending.push(op);
+        schedule();
+    };
+    function start() {
+        if (running)
+            return;
+        running = true;
+        if (enableClock) {
+            uninstallers.push(installClockPatch(emit));
+        }
+        if (enableRandom) {
+            uninstallers.push(installRandomPatch(emit));
+        }
+        if (enableTimers) {
+            const { uninstall } = installTimerPatch(emit);
+            uninstallers.push(uninstall);
+        }
+        if (enableNetwork) {
+            uninstallers.push(installNetworkPatch(emit));
+        }
+        if (enableStorage) {
+            uninstallers.push(installStoragePatch(emit));
+        }
+        if (enableEvents && typeof EventTarget !== "undefined") {
+            uninstallers.push(installEventPatch(emit));
+        }
+    }
+    function stop() {
+        if (!running)
+            return;
+        running = false;
+        flush();
+        for (const fn of uninstallers)
+            fn();
+        uninstallers.length = 0;
+    }
+    function snapshot() {
+        return {
+            type: "snapshot",
+            html: typeof document !== "undefined" ? document.documentElement.outerHTML : "",
+            url: typeof location !== "undefined" ? location.href : "",
+            timestamp: Date.now(),
+            pendingTimers: [],
+            pendingNetwork: [],
+        };
+    }
+    function destroy() {
+        stop();
+        pending = [];
+    }
+    return { start, stop, snapshot, destroy };
+}
+
+/**
+ * Player — replays event loop ops on a follower runtime.
+ *
+ * Two replay modes:
+ *   - "temporal" (default): ops are replayed at their original cadence
+ *     using the `ts` field on each op. Preserves the timing of the
+ *     original execution.
+ *   - "instant": ops are applied immediately. Useful for fast-forward
+ *     or catching up a late joiner.
+ *
+ * Monkey-patches globals on the follower so that Math.random(),
+ * Date.now(), fetch(), etc. return recorded values.
+ */
+function createPlayer(options = {}) {
+    const { mode: defaultMode = "temporal", strict = false, events: enableEvents = true, timers: enableTimers = true, network: enableNetwork = true, random: enableRandom = true, clock: enableClock = true, storage: enableStorage = true, } = options;
+    // Sync-oracle queues — populated by applying ops; drained by the
+    // follower's patched accessors.
+    const randomQueue = [];
+    const clockQueue = [];
+    const pendingByKey = new Map();
+    const queuedByKey = new Map();
+    function asyncKey(kind, id) {
+        return `${kind}\u0000${id}`;
+    }
+    function awaitAsyncOracle(kind, id) {
+        const key = asyncKey(kind, id);
+        // Op already queued? Resolve immediately.
+        const queued = queuedByKey.get(key);
+        if (queued && queued.length > 0) {
+            const value = queued.shift();
+            if (queued.length === 0)
+                queuedByKey.delete(key);
+            return Promise.resolve(value);
+        }
+        // Not yet — park.
+        return new Promise((resolve, reject) => {
+            const arr = pendingByKey.get(key) ?? [];
+            arr.push({ resolve, reject });
+            pendingByKey.set(key, arr);
+        });
+    }
+    function signalAsyncOracle(kind, id, value) {
+        const key = asyncKey(kind, id);
+        // Pending waiter? Resolve the oldest.
+        const pending = pendingByKey.get(key);
+        if (pending && pending.length > 0) {
+            const p = pending.shift();
+            if (pending.length === 0)
+                pendingByKey.delete(key);
+            p.resolve(value);
+            return;
+        }
+        // No waiter — queue for a future await.
+        const arr = queuedByKey.get(key) ?? [];
+        arr.push(value);
+        queuedByKey.set(key, arr);
+    }
+    function buildResponseFrom(op) {
+        return new Response(op.body, {
+            status: op.status ?? 200,
+            headers: op.headers ?? {},
+        });
+    }
+    function fetchKey(url, method) {
+        return `${method.toUpperCase()} ${url}`;
+    }
+    // Temporal replay state — tracks setTimeout handles so destroy() can cancel.
+    const pendingTimers = [];
+    // Save originals for cleanup
+    const origRandom = Math.random;
+    const origDateNow = Date.now;
+    const origFetch = globalThis.fetch;
+    const origSetTimeout = globalThis.setTimeout;
+    const origSetInterval = globalThis.setInterval;
+    const origClearTimeout = globalThis.clearTimeout;
+    const origClearInterval = globalThis.clearInterval;
+    const origRAF = typeof requestAnimationFrame === "function" ? requestAnimationFrame : null;
+    const origCAF = typeof cancelAnimationFrame === "function" ? cancelAnimationFrame : null;
+    const origRIC = typeof globalThis.requestIdleCallback === "function" ? globalThis.requestIdleCallback : null;
+    const origCIC = typeof globalThis.cancelIdleCallback === "function" ? globalThis.cancelIdleCallback : null;
+    const strictTimers = new Map();
+    let strictNextSeq = 0;
+    let installed = false;
+    function install() {
+        if (installed)
+            return;
+        installed = true;
+        if (enableRandom) {
+            Math.random = function () {
+                if (randomQueue.length > 0)
+                    return randomQueue.shift();
+                return origRandom();
+            };
+        }
+        if (enableClock) {
+            Date.now = function () {
+                if (clockQueue.length > 0)
+                    return clockQueue.shift();
+                return origDateNow.call(Date);
+            };
+        }
+        if (enableNetwork) {
+            // The follower's fetch waits for the leader's matching NetworkOp
+            // via the generic async-oracle protocol. No native fallback —
+            // hanging is safer than silently diverging.
+            globalThis.fetch = function (input, init) {
+                const url = typeof input === "string"
+                    ? input
+                    : input instanceof URL ? input.href : input.url;
+                const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+                return awaitAsyncOracle("fetch", fetchKey(url, method));
+            };
+        }
+        if (strict && enableTimers)
+            installStrictTimers();
+    }
+    function installStrictTimers() {
+        globalThis.setTimeout = function (cb, _delay, ..._args) {
+            const seq = strictNextSeq++;
+            const fn = typeof cb === "string" ? () => eval(cb) : cb;
+            strictTimers.set(seq, { kind: "timeout", cb: fn });
+            return seq;
+        };
+        globalThis.setInterval = function (cb, _delay, ..._args) {
+            const seq = strictNextSeq++;
+            const fn = typeof cb === "string" ? () => eval(cb) : cb;
+            strictTimers.set(seq, { kind: "interval", cb: fn });
+            return seq;
+        };
+        globalThis.clearTimeout = function (id) {
+            if (id !== undefined)
+                strictTimers.delete(id);
+        };
+        globalThis.clearInterval = function (id) {
+            if (id !== undefined)
+                strictTimers.delete(id);
+        };
+        if (origRAF) {
+            globalThis.requestAnimationFrame = function (cb) {
+                const seq = strictNextSeq++;
+                strictTimers.set(seq, { kind: "raf", cb });
+                return seq;
+            };
+            globalThis.cancelAnimationFrame = function (id) {
+                strictTimers.delete(id);
+            };
+        }
+        if (origRIC) {
+            globalThis.requestIdleCallback = function (cb) {
+                const seq = strictNextSeq++;
+                strictTimers.set(seq, { kind: "idle", cb });
+                return seq;
+            };
+            globalThis.cancelIdleCallback = function (id) {
+                strictTimers.delete(id);
+            };
+        }
+    }
+    function applyTimer(op) {
+        if (!strict || !enableTimers)
+            return;
+        const entry = strictTimers.get(op.seq);
+        if (!entry)
+            return;
+        if (entry.kind !== "interval")
+            strictTimers.delete(op.seq);
+        // rAF callbacks expect a DOMHighResTimeStamp; idle expects a
+        // deadline. Pass the leader's actualTime for rAF; synthesize a
+        // minimal deadline for idle. Timeout/interval callbacks ignore
+        // their argument.
+        if (entry.kind === "raf") {
+            entry.cb(op.actualTime);
+        }
+        else if (entry.kind === "idle") {
+            const deadline = { didTimeout: false, timeRemaining: () => 50 };
+            entry.cb(deadline);
+        }
+        else {
+            entry.cb();
+        }
+    }
+    function applyOp(op) {
+        switch (op.type) {
+            case "event":
+                applyEvent(op);
+                break;
+            case "timer":
+                applyTimer(op);
+                break;
+            case "network":
+                applyNetwork(op);
+                break;
+            case "random":
+                applyRandom(op);
+                break;
+            case "clock":
+                applyClock(op);
+                break;
+            case "storage":
+                applyStorage(op);
+                break;
+            case "snapshot":
+                applySnapshot(op);
+                break;
+            case "navigation": break;
+        }
+    }
+    function applyEvent(op) {
+        if (!enableEvents)
+            return;
+        if (typeof document === "undefined")
+            return;
+        const target = document.querySelector(op.targetPath);
+        if (!target)
+            return;
+        let event;
+        const d = op.detail;
+        if (op.eventType.startsWith("pointer")) {
+            event = new PointerEvent(op.eventType, {
+                bubbles: true, cancelable: true,
+                clientX: d.clientX, clientY: d.clientY,
+                button: d.button, buttons: d.buttons,
+                pointerId: d.pointerId ?? 1,
+            });
+        }
+        else if (op.eventType.startsWith("mouse") || op.eventType === "click" || op.eventType === "dblclick") {
+            event = new MouseEvent(op.eventType, {
+                bubbles: true, cancelable: true,
+                clientX: d.clientX, clientY: d.clientY,
+                button: d.button,
+            });
+        }
+        else if (op.eventType.startsWith("key")) {
+            event = new KeyboardEvent(op.eventType, {
+                bubbles: true, cancelable: true,
+                key: d.key, code: d.code,
+                altKey: d.altKey, ctrlKey: d.ctrlKey,
+                shiftKey: d.shiftKey, metaKey: d.metaKey,
+            });
+        }
+        else if (op.eventType === "scroll") {
+            // Synthetic scroll events don't move the viewport — set position first,
+            // then dispatch so listeners see the new values.
+            const el = target;
+            const maxTop = el.scrollHeight - el.clientHeight;
+            const maxLeft = el.scrollWidth - el.clientWidth;
+            if (typeof d.scrollTopPct === "number") {
+                el.scrollTop = d.scrollTopPct * Math.max(0, maxTop);
+            }
+            else if (typeof d.scrollTop === "number") {
+                el.scrollTop = d.scrollTop;
+            }
+            if (typeof d.scrollLeftPct === "number") {
+                el.scrollLeft = d.scrollLeftPct * Math.max(0, maxLeft);
+            }
+            else if (typeof d.scrollLeft === "number") {
+                el.scrollLeft = d.scrollLeft;
+            }
+            event = new Event(op.eventType, { bubbles: true, cancelable: true });
+        }
+        else if (op.eventType === "input" || op.eventType === "change") {
+            if ("value" in d && "value" in target) {
+                target.value = d.value;
+            }
+            event = new Event(op.eventType, { bubbles: true, cancelable: true });
+        }
+        else {
+            event = new Event(op.eventType, { bubbles: true, cancelable: true });
+        }
+        // Anchors and buttons require the activation algorithm (navigation,
+        // form submit) which dispatchEvent does not run — only trusted clicks
+        // or element.click() do. Route clicks on these through .click().
+        if (op.eventType === "click" && target instanceof HTMLElement) {
+            const tag = target.tagName;
+            const isActivatable = (tag === "A" && target.href) ||
+                tag === "BUTTON" ||
+                (tag === "INPUT" && ["submit", "reset", "button", "image"].includes(target.type));
+            if (isActivatable) {
+                target.click();
+                return;
+            }
+        }
+        target.dispatchEvent(event);
+    }
+    function applyNetwork(op) {
+        if (!enableNetwork)
+            return;
+        const method = op.method ?? "GET";
+        signalAsyncOracle("fetch", fetchKey(op.url, method), buildResponseFrom(op));
+    }
+    function applyRandom(op) {
+        if (!enableRandom)
+            return;
+        randomQueue.push(...op.values);
+    }
+    function applyClock(op) {
+        if (!enableClock)
+            return;
+        clockQueue.push(op.value);
+    }
+    function applyStorage(op) {
+        if (!enableStorage)
+            return;
+        const storage = op.kind === "local"
+            ? (typeof localStorage !== "undefined" ? localStorage : null)
+            : (typeof sessionStorage !== "undefined" ? sessionStorage : null);
+        if (!storage)
+            return;
+        if (op.action === "set" && op.value !== null)
+            storage.setItem(op.key, op.value);
+        else if (op.action === "remove")
+            storage.removeItem(op.key);
+    }
+    function applySnapshot(op) {
+        if (typeof document === "undefined")
+            return;
+        document.documentElement.innerHTML = op.html;
+    }
+    /**
+     * The replication invariant: every oracle value a handler reads must
+     * be available on the follower before the trigger that runs the
+     * handler. The recorder emits in observation order (trigger first,
+     * oracles second); we reorder on apply so oracles land before the
+     * trigger that consumes them. See epic #19 for why this only covers
+     * the sync-handler case.
+     */
+    function isOracle(op) {
+        switch (op.type) {
+            case "random":
+            case "clock":
+            case "network":
+                return true;
+            case "storage":
+                return op.action === "get";
+            default:
+                return false;
+        }
+    }
+    function partitionOps(ops) {
+        const oracles = [];
+        const triggers = [];
+        for (const op of ops) {
+            if (isOracle(op))
+                oracles.push(op);
+            else
+                triggers.push(op);
+        }
+        return { oracles, triggers };
+    }
+    function apply(ops, options) {
+        install();
+        if (ops.length === 0)
+            return;
+        const mode = options?.mode ?? defaultMode;
+        const { oracles, triggers } = partitionOps(ops);
+        // Oracles populate the follower's queues. They're not user-visible,
+        // so we apply them synchronously regardless of mode — their ts is
+        // only used to order them among themselves (already preserved by
+        // partition's stable order).
+        for (const op of oracles)
+            applyOp(op);
+        if (mode === "instant") {
+            for (const op of triggers)
+                applyOp(op);
+            return;
+        }
+        // Temporal mode for triggers: schedule at original relative times.
+        let minTs = Infinity;
+        for (const op of triggers) {
+            if (op.ts !== undefined && op.ts < minTs)
+                minTs = op.ts;
+        }
+        if (minTs === Infinity) {
+            for (const op of triggers)
+                applyOp(op);
+            return;
+        }
+        for (const op of triggers) {
+            const delay = op.ts !== undefined ? op.ts - minTs : 0;
+            if (delay <= 0) {
+                applyOp(op);
+            }
+            else {
+                // Use origSetTimeout so strict-mode timer gating doesn't
+                // swallow the player's own scheduling.
+                const timer = origSetTimeout.call(globalThis, () => applyOp(op), delay);
+                pendingTimers.push(timer);
+            }
+        }
+    }
+    function destroy() {
+        for (const t of pendingTimers)
+            origClearTimeout.call(globalThis, t);
+        pendingTimers.length = 0;
+        if (!installed)
+            return;
+        installed = false;
+        Math.random = origRandom;
+        Date.now = origDateNow;
+        globalThis.fetch = origFetch;
+        if (strict && enableTimers) {
+            globalThis.setTimeout = origSetTimeout;
+            globalThis.setInterval = origSetInterval;
+            globalThis.clearTimeout = origClearTimeout;
+            globalThis.clearInterval = origClearInterval;
+            if (origRAF)
+                globalThis.requestAnimationFrame = origRAF;
+            if (origCAF)
+                globalThis.cancelAnimationFrame = origCAF;
+            if (origRIC)
+                globalThis.requestIdleCallback = origRIC;
+            if (origCIC)
+                globalThis.cancelIdleCallback = origCIC;
+            strictTimers.clear();
+        }
+        randomQueue.length = 0;
+        clockQueue.length = 0;
+        // Reject any still-pending async-oracle waiters so their promises
+        // don't hang past teardown.
+        for (const arr of pendingByKey.values()) {
+            for (const p of arr)
+                p.reject(new Error("remjs player destroyed"));
+        }
+        pendingByKey.clear();
+        queuedByKey.clear();
+    }
+    return { apply, destroy };
+}
+
+window.remjs = { createRecorder, createPlayer, jsonCodec };
+})();
+  </script>
+
+  <script>
+(function () {
+  const { createPlayer } = window.remjs;
+
+  // Native timer APIs — captured before any player patches window globals.
+  const nativeSetInterval = window.setInterval.bind(window);
+  const nativeClearInterval = window.clearInterval.bind(window);
+
+  const $ = (id) => document.getElementById(id);
+  const leaderRegRows = $("leader-reg-rows"), leaderRegSize = $("leader-reg-size"),
+        leaderRegEmitted = $("leader-reg-emitted");
+  const strictRegRows = $("strict-reg-rows"), strictRegSize = $("strict-reg-size"),
+        strictRegApplied = $("strict-reg-applied");
+  const nativeCounter = $("native-counter"), nativeReceived = $("native-received");
+  const channelEl = $("channel"), channelInflight = $("channel-inflight"),
+        channelState = $("channel-state");
+  const oplog = $("oplog");
+  const startBtn = $("start"), pauseBtn = $("pause"),
+        resumeBtn = $("resume"), stopBtn = $("stop");
+
+  // ── Models of each runtime's registry ──────────────────────────────
+  // We mirror the state each runtime holds internally. These objects are
+  // the "state machine state" rendered in the UI.
+  const leaderReg = new Map();    // seq → { kind, cbName, fires }
+  const strictReg = new Map();    // seq → { kind, cbName, fires }
+  let nativeFires = 0;
+  let opsEmitted = 0;
+  let opsApplied = 0;
+  let opsReceived = 0;
+
+  let nativePlayer = null, strictPlayer = null;
+  let paused = false;
+  let queued = [];
+  let leaderTicks = [];   // native intervals driving the leader
+  let nativeFollowerTicks = [];
+
+  // ── UI rendering ───────────────────────────────────────────────────
+  function renderRegistry(container, reg, hitSeq) {
+    if (reg.size === 0) {
+      container.innerHTML = '<div class="registry-row empty">(empty)</div>';
+      return;
+    }
+    let html = "";
+    for (const [seq, row] of reg) {
+      const hit = seq === hitSeq ? " hit" : "";
+      html += '<div class="registry-row' + hit + '" data-seq="' + seq + '">' +
+        '<div class="seq">' + seq + '</div>' +
+        '<div class="kind">' + row.kind + '</div>' +
+        '<div class="cb">' + row.cbName + '</div>' +
+        '<div class="fires">' + row.fires + '</div>' +
+        '</div>';
+    }
+    container.innerHTML = html;
+  }
+
+  function pulseRow(container, seq) {
+    const row = container.querySelector('[data-seq="' + seq + '"]');
+    if (!row) return;
+    row.classList.add("hit");
+    nativeSetTimeout(() => row.classList.remove("hit"), 300);
+  }
+
+  // setTimeout was captured for pulse timing — save it now.
+  const nativeSetTimeout = window.setTimeout.bind(window);
+
+  function updateCounters() {
+    leaderRegSize.textContent = leaderReg.size + " slot" + (leaderReg.size === 1 ? "" : "s");
+    leaderRegEmitted.textContent = opsEmitted + " emitted";
+    strictRegSize.textContent = strictReg.size + " slot" + (strictReg.size === 1 ? "" : "s");
+    strictRegApplied.textContent = opsApplied + " applied";
+    nativeCounter.textContent = "native fires: " + nativeFires;
+    nativeReceived.textContent = opsReceived + " ops received";
+  }
+
+  function logOp(op, cls) {
+    const div = document.createElement("div");
+    div.className = "oplog-entry" + (cls ? " " + cls : "");
+    div.innerHTML = '{ <span class="t">type</span>: "timer", kind: "' + op.kind +
+      '", seq: <span class="seq-val">' + op.seq + '</span>, scheduledDelay: ' +
+      op.scheduledDelay + ' }';
+    oplog.insertBefore(div, oplog.firstChild);
+    while (oplog.children.length > 60) oplog.removeChild(oplog.lastChild);
+  }
+
+  function showInflight(op) {
+    channelInflight.innerHTML = '<span class="op-live">→ { type: "timer", kind: "' +
+      op.kind + '", seq: ' + op.seq + ' }</span>';
+  }
+
+  // ── Op channel ─────────────────────────────────────────────────────
+  function deliver(op) {
+    if (paused) {
+      queued.push(op);
+      logOp(op, "dropped");
+      return;
+    }
+    opsApplied++;
+    opsReceived++;
+    logOp(op);
+    showInflight(op);
+
+    // Non-strict: TimerOp is a no-op on the player, but we still count
+    // "received" for honesty. The non-strict follower's native fires
+    // increment through its own setInterval, not via ops.
+    nativePlayer.apply([op]);
+
+    // Strict: op triggers the callback. Pulse the matching row and bump
+    // its fire count.
+    strictPlayer.apply([op]);
+    if (strictReg.has(op.seq)) {
+      const row = strictReg.get(op.seq);
+      row.fires++;
+      if (row.kind !== "interval") strictReg.delete(op.seq);
+    }
+
+    renderRegistry(strictRegRows, strictReg);
+    pulseRow(strictRegRows, op.seq);
+    updateCounters();
+  }
+
+  function drainQueued() {
+    const batch = queued.slice();
+    queued = [];
+    for (const op of batch) {
+      logOp(op, "delivered-late");
+      opsApplied++;
+      opsReceived++;
+      showInflight(op);
+      nativePlayer.apply([op]);
+      strictPlayer.apply([op]);
+      if (strictReg.has(op.seq)) {
+        const row = strictReg.get(op.seq);
+        row.fires++;
+        if (row.kind !== "interval") strictReg.delete(op.seq);
+      }
+    }
+    renderRegistry(strictRegRows, strictReg);
+    updateCounters();
+  }
+
+  // ── Start / lifecycle ──────────────────────────────────────────────
+  function start() {
+    // Reset all state
+    leaderReg.clear(); strictReg.clear();
+    nativeFires = 0; opsEmitted = 0; opsApplied = 0; opsReceived = 0;
+    oplog.innerHTML = "";
+    channelInflight.textContent = "—";
+    channelState.textContent = "LIVE";
+    channelEl.classList.remove("paused");
+    queued = [];
+    paused = false;
+
+    // Non-strict player: doesn't patch timers; timer ops are no-ops.
+    nativePlayer = createPlayer({
+      events: false, network: false, random: false, clock: false, storage: false,
+    });
+    nativePlayer.apply([]);
+
+    // Strict player: patches setInterval/setTimeout/rAF/rIC.
+    strictPlayer = createPlayer({
+      strict: true,
+      events: false, network: false, random: false, clock: false, storage: false,
+    });
+    strictPlayer.apply([]);
+
+    // ── Follower B (strict) "app code" ──
+    // Registers two callbacks at different cadences. They return seqs
+    // without scheduling native timers.
+    const tickSeq = window.setInterval(() => {}, 200);
+    strictReg.set(tickSeq, { kind: "interval", cbName: "tick()", fires: 0 });
+
+    const heartbeatSeq = window.setInterval(() => {}, 500);
+    strictReg.set(heartbeatSeq, { kind: "interval", cbName: "heartbeat()", fires: 0 });
+
+    // A one-shot timeout fires once then the row disappears.
+    const onceSeq = window.setTimeout(() => {}, 1000);
+    strictReg.set(onceSeq, { kind: "timeout", cbName: "once()", fires: 0 });
+
+    // ── Follower A (non-strict) "app code" ──
+    // Its code also calls setInterval but since this player doesn't gate,
+    // we'd really hit native. Simulate with nativeSetInterval, counting
+    // fires so the user sees native ticks accumulate independent of ops.
+    nativeFollowerTicks.push(nativeSetInterval(() => {
+      nativeFires++;
+      updateCounters();
+    }, 200));
+    nativeFollowerTicks.push(nativeSetInterval(() => {
+      nativeFires++;
+      updateCounters();
+    }, 500));
+
+    // ── Leader ──
+    // On the leader the same app code would run; its recorder's seqMap
+    // would populate identically. For the demo we mirror leaderReg from
+    // the same seqs we registered above, and fire ops matching each.
+    leaderReg.set(tickSeq, { kind: "interval", cbName: "tick()", fires: 0 });
+    leaderReg.set(heartbeatSeq, { kind: "interval", cbName: "heartbeat()", fires: 0 });
+    leaderReg.set(onceSeq, { kind: "timeout", cbName: "once()", fires: 0 });
+
+    const emitTimerOp = (seq, kind, delay) => {
+      const op = {
+        type: "timer", kind, seq,
+        scheduledDelay: delay, actualTime: performance.now(),
+      };
+      // Leader-side: its recorder would bump the seq's fire count.
+      if (leaderReg.has(seq)) {
+        const row = leaderReg.get(seq);
+        row.fires++;
+        if (row.kind !== "interval") leaderReg.delete(seq);
+      }
+      opsEmitted++;
+      renderRegistry(leaderRegRows, leaderReg);
+      pulseRow(leaderRegRows, seq);
+      updateCounters();
+      deliver(op);
+    };
+
+    leaderTicks.push(nativeSetInterval(() => emitTimerOp(tickSeq, "interval", 200), 200));
+    leaderTicks.push(nativeSetInterval(() => emitTimerOp(heartbeatSeq, "interval", 500), 500));
+    leaderTicks.push(nativeSetTimeout(() => emitTimerOp(onceSeq, "timeout", 1000), 1000));
+
+    renderRegistry(leaderRegRows, leaderReg);
+    renderRegistry(strictRegRows, strictReg);
+    updateCounters();
+
+    startBtn.disabled = true;
+    pauseBtn.disabled = false;
+    stopBtn.disabled = false;
+  }
+
+  function pause() {
+    paused = true;
+    channelState.textContent = "PAUSED";
+    channelEl.classList.add("paused");
+    pauseBtn.disabled = true;
+    resumeBtn.disabled = false;
+  }
+
+  function resume() {
+    paused = false;
+    channelState.textContent = "LIVE";
+    channelEl.classList.remove("paused");
+    drainQueued();
+    pauseBtn.disabled = false;
+    resumeBtn.disabled = true;
+  }
+
+  function stop() {
+    for (const t of leaderTicks) nativeClearInterval(t);
+    for (const t of nativeFollowerTicks) nativeClearInterval(t);
+    leaderTicks = []; nativeFollowerTicks = [];
+    if (nativePlayer) { nativePlayer.destroy(); nativePlayer = null; }
+    if (strictPlayer) { strictPlayer.destroy(); strictPlayer = null; }
+    channelState.textContent = "STOPPED";
+    channelEl.classList.remove("paused");
+    channelInflight.textContent = "—";
+    startBtn.disabled = false;
+    pauseBtn.disabled = true;
+    resumeBtn.disabled = true;
+    stopBtn.disabled = true;
+  }
+
+  startBtn.addEventListener("click", start);
+  pauseBtn.addEventListener("click", pause);
+  resumeBtn.addEventListener("click", resume);
+  stopBtn.addEventListener("click", stop);
+
+  // Initial empty render
+  renderRegistry(leaderRegRows, leaderReg);
+  renderRegistry(strictRegRows, strictReg);
+  updateCounters();
+})();
+  </script>
+</body>
+</html>
