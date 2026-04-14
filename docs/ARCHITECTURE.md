@@ -231,6 +231,63 @@ reads them.
   read falls through to native. Don't do that; keep non-deterministic
   reads inside handlers.
 
+## Strict mode (0.5.x)
+
+Injection-mode replication (0.4.x and earlier) hands recorded inputs
+to the follower's native event loop, which keeps firing its own
+timers, rAF, and DOM events underneath. That works when the follower
+is quiescent between triggers — most framework apps that only re-
+render in response to events — but any app with an independent rAF
+loop (shuffleboard), live DOM interactivity, or autosave timers can
+drift.
+
+**Strict mode** (opt-in via `createPlayer({ strict: true })`) closes
+the native channels one subsystem at a time. The follower stops
+scheduling native timers, stops dispatching native DOM events to
+user handlers, and stops falling through to native oracles. Every
+handler invocation on the follower traces back to an op the player
+applied.
+
+The thesis remjs has always made — same code + same inputs → same
+state — becomes *testable* under strict mode. Non-goals still apply
+(GC, layout, paint, iframe lifecycle aren't input channels; we
+don't claim to control them), but the enumerable set of input
+channels is fully gated.
+
+### Strict timers (0.5.1)
+
+Patch points on the follower: `setTimeout`, `setInterval`,
+`clearTimeout`, `clearInterval`, `requestAnimationFrame`,
+`cancelAnimationFrame`, `requestIdleCallback`, `cancelIdleCallback`.
+
+Registration model: `setTimeout(cb, delay)` assigns a player-local
+monotonic `seq`, stores `{ kind, cb }` under that seq, returns the
+seq as handle, does **not** call native. `TimerOp { kind, seq }`
+from the leader looks up the callback and invokes it — deleting the
+entry for one-shot kinds (`timeout`/`raf`/`idle`), keeping it for
+`interval`. `clearTimeout(seq)` deletes the entry so a straggler op
+for that seq is a no-op.
+
+The leader's `TimerOp.actualTime` is passed to `rAF` callbacks as
+the `DOMHighResTimeStamp` argument — prevents animation time-drift
+across replicas.
+
+Seq alignment rests on the follower registering timers in the same
+order as the leader. This holds iff both runtimes run the same app
+code against the same op prefix; any divergence in state before the
+first timer registration breaks alignment and everything downstream.
+The larger-scope strict milestones (events, oracles) are what remove
+the remaining sources of pre-timer divergence.
+
+### Milestones 2–6
+
+Tracked under epic [#22]. Short form: events gated by `isTrusted`
+(0.5.2), native oracle fallback removed (0.5.3), pause/step primitive
+built on top of the strict tier (0.5.4), scoped capture for P2P
+(0.5.5), topology docs (0.5.6).
+
+[#22]: https://github.com/rlyshw/remjs/issues/22
+
 ## Known limitations
 
 - **Pending timers and network are not reanimated on snapshot.** The

@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.5.1 — strict timers (epic #22, milestone 1)
+
+First slice of the **strict mode** epic. The framework's thesis —
+same code + same inputs → same state — is only provable if the
+follower executes *only* as a function of applied ops. Today the
+follower's native event loop continues to fire timers, rAF, and DOM
+events underneath the player. Strict mode closes those channels.
+
+0.5.1 closes the timer channel. The follower's `setTimeout`,
+`setInterval`, `requestAnimationFrame`, `requestIdleCallback` (and
+their cancel variants) are gated: registration records the callback
+against a player-local monotonic seq and returns the seq as handle;
+no native timer is scheduled. The callback fires only when the
+matching leader `TimerOp` arrives via `player.apply()`.
+
+Opt-in under `createPlayer({ strict: true })`. Default behavior
+unchanged.
+
+### Added
+
+- **`strict` option on `createPlayer`.** When `true`, strict-mode
+  patches activate. Under 0.5.1 only the timer patch is affected;
+  events, oracles, and fetch gain strict behavior in subsequent
+  milestones.
+- **Strict timer patch on the follower.** Gates `setTimeout`,
+  `setInterval`, `clearTimeout`, `clearInterval`,
+  `requestAnimationFrame`, `cancelAnimationFrame`,
+  `requestIdleCallback`, `cancelIdleCallback`. Callbacks fire only
+  when a matching `TimerOp` is applied.
+- **Recorder-side rAF / rIC coverage.** `src/patches/timers.ts` now
+  emits `TimerOp` for `requestAnimationFrame` and
+  `requestIdleCallback` fires, not just `setTimeout`/`setInterval`.
+  Required for strict follower to have ops to wait on.
+- **`applyTimer`.** The player's op dispatcher stops short-circuiting
+  on `timer` ops under strict mode; invokes the registered callback.
+
+### Changed
+
+- **`case "timer"` in `applyOp`** — was a no-op; now calls
+  `applyTimer(op)` which is a no-op in non-strict mode (preserving
+  0.4.x behavior) and an invocation in strict mode.
+
+### Docs
+
+- `docs/ARCHITECTURE.md` gains a **Strict mode** section covering the
+  epic framing and the strict-timers mechanism.
+- `docs/USAGE.md` documents the `strict` option and the
+  subsystem-coupling contract.
+
 ## 0.4.0 — async handler determinism
 
 0.3.2 enforced the replay invariant for synchronous handlers. Async

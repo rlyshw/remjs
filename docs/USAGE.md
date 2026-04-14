@@ -91,6 +91,7 @@ late-joining followers as their bootstrap before live ops.
 ```ts
 interface PlayerOptions {
   mode?: "temporal" | "instant";   // default "temporal"
+  strict?: boolean;                // default false — see "Strict mode"
   events?: boolean;
   timers?: boolean;
   network?: boolean;
@@ -137,6 +138,48 @@ ws.onmessage = (e) => player.apply(jsonCodec.decodeBatch(e.data));
 Same as the recorder. Useful when you want the follower to execute its
 own timers natively but still accept recorded random and clock values
 (e.g. `{ timers: false, random: true, clock: true }`).
+
+### Strict mode (0.5.1+)
+
+Default behavior is *injection*: the player dispatches recorded ops
+into the follower's native event loop; the follower's own timers,
+rAF, and DOM events keep firing underneath. That's fine when the
+follower is otherwise quiescent but produces drift in apps with
+independent rAF loops or live user input.
+
+`{ strict: true }` flips each enabled subsystem from "observe, fall
+back to native" to "gate, require op." Under 0.5.1 this affects the
+timer patch only — a strict follower's `setTimeout`, `setInterval`,
+`requestAnimationFrame`, `requestIdleCallback` (and their cancel
+variants) do **not** schedule native callbacks. They record the
+callback against a monotonic seq and fire only when the matching
+leader `TimerOp` is applied.
+
+```ts
+const player = createPlayer({ strict: true });
+```
+
+**Subsystem contract.** A strict follower whose app uses `setTimeout`
+requires `timers: true` on *both* the recorder and the player.
+Otherwise `setTimeout` registrations accumulate callbacks that never
+fire. Divergence becomes a loud failure (your UI stops advancing)
+rather than a silent one — which is the intended tradeoff.
+
+Strict mode is additive across versions:
+
+- **0.5.1** — timers. (this release)
+- **0.5.2** — events: gate native DOM dispatch; only
+  `player.apply`-dispatched events reach handlers.
+- **0.5.3** — oracles: `Math.random` / `Date.now` /
+  `localStorage.getItem` throw on empty queue instead of falling
+  through to native.
+- **0.5.4** — pause/step: `player.pause() / step() / resume()` on top
+  of the strict tier. Closes #18.
+- **0.5.5** — scoped capture: follower becomes leader for declared
+  event scopes, enabling P2P.
+
+See [`epic #22`](https://github.com/rlyshw/remjs/issues/22) for the
+full roadmap and rationale.
 
 ## Transports
 

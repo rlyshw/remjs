@@ -18,6 +18,16 @@ export type ReplayMode = "temporal" | "instant";
 
 export interface PlayerOptions {
   mode?: ReplayMode;
+  /**
+   * Strict mode gates every event-loop entry on the follower. Enabled
+   * subsystems stop falling through to native — timers only fire on
+   * matching TimerOps, fetch/oracle reads must be satisfied by ops.
+   * Default false (0.4.x injection semantics). See epic #22.
+   *
+   * 0.5.1: strict timers land. Other subsystems follow in 0.5.2+; under
+   * 0.5.1 the `strict: true` flag only affects the timer patch.
+   */
+  strict?: boolean;
   events?: boolean;
   timers?: boolean;
   network?: boolean;
@@ -39,6 +49,7 @@ export interface Player {
 export function createPlayer(options: PlayerOptions = {}): Player {
   const {
     mode: defaultMode = "temporal",
+    strict = false,
     events: enableEvents = true,
     timers: enableTimers = true,
     network: enableNetwork = true,
@@ -117,6 +128,24 @@ export function createPlayer(options: PlayerOptions = {}): Player {
   const origRandom = Math.random;
   const origDateNow = Date.now;
   const origFetch = globalThis.fetch;
+  const origSetTimeout = globalThis.setTimeout;
+  const origSetInterval = globalThis.setInterval;
+  const origClearTimeout = globalThis.clearTimeout;
+  const origClearInterval = globalThis.clearInterval;
+  const origRAF = typeof requestAnimationFrame === "function" ? requestAnimationFrame : null;
+  const origCAF = typeof cancelAnimationFrame === "function" ? cancelAnimationFrame : null;
+  const origRIC = typeof (globalThis as any).requestIdleCallback === "function" ? (globalThis as any).requestIdleCallback : null;
+  const origCIC = typeof (globalThis as any).cancelIdleCallback === "function" ? (globalThis as any).cancelIdleCallback : null;
+
+  // Strict-timers state. When `strict && enableTimers`, follower
+  // setTimeout/setInterval/rAF/rIC don't schedule native callbacks.
+  // They record the callback against a monotonic seq (matching the
+  // recorder's assignment order on the leader) and wait for the
+  // matching TimerOp to arrive. clearTimeout removes the entry so
+  // stragglers no-op.
+  interface StrictTimer { kind: "timeout" | "interval" | "raf" | "idle"; cb: Function }
+  const strictTimers: Map<number, StrictTimer> = new Map();
+  let strictNextSeq = 0;
 
   let installed = false;
 
@@ -150,12 +179,79 @@ export function createPlayer(options: PlayerOptions = {}): Player {
         return awaitAsyncOracle("fetch", fetchKey(url, method)) as Promise<Response>;
       } as typeof globalThis.fetch;
     }
+
+    if (strict && enableTimers) installStrictTimers();
+  }
+
+  function installStrictTimers(): void {
+    globalThis.setTimeout = function (cb: Function | string, _delay?: number, ..._args: unknown[]): number {
+      const seq = strictNextSeq++;
+      const fn = typeof cb === "string" ? () => eval(cb as string) : cb;
+      strictTimers.set(seq, { kind: "timeout", cb: fn });
+      return seq as unknown as number;
+    } as typeof globalThis.setTimeout;
+
+    globalThis.setInterval = function (cb: Function | string, _delay?: number, ..._args: unknown[]): number {
+      const seq = strictNextSeq++;
+      const fn = typeof cb === "string" ? () => eval(cb as string) : cb;
+      strictTimers.set(seq, { kind: "interval", cb: fn });
+      return seq as unknown as number;
+    } as typeof globalThis.setInterval;
+
+    globalThis.clearTimeout = function (id?: number): void {
+      if (id !== undefined) strictTimers.delete(id);
+    } as typeof globalThis.clearTimeout;
+
+    globalThis.clearInterval = function (id?: number): void {
+      if (id !== undefined) strictTimers.delete(id);
+    } as typeof globalThis.clearInterval;
+
+    if (origRAF) {
+      (globalThis as any).requestAnimationFrame = function (cb: FrameRequestCallback): number {
+        const seq = strictNextSeq++;
+        strictTimers.set(seq, { kind: "raf", cb });
+        return seq;
+      };
+      (globalThis as any).cancelAnimationFrame = function (id: number): void {
+        strictTimers.delete(id);
+      };
+    }
+
+    if (origRIC) {
+      (globalThis as any).requestIdleCallback = function (cb: IdleRequestCallback): number {
+        const seq = strictNextSeq++;
+        strictTimers.set(seq, { kind: "idle", cb });
+        return seq;
+      };
+      (globalThis as any).cancelIdleCallback = function (id: number): void {
+        strictTimers.delete(id);
+      };
+    }
+  }
+
+  function applyTimer(op: TimerOp): void {
+    if (!strict || !enableTimers) return;
+    const entry = strictTimers.get(op.seq);
+    if (!entry) return;
+    if (entry.kind !== "interval") strictTimers.delete(op.seq);
+    // rAF callbacks expect a DOMHighResTimeStamp; idle expects a
+    // deadline. Pass the leader's actualTime for rAF; synthesize a
+    // minimal deadline for idle. Timeout/interval callbacks ignore
+    // their argument.
+    if (entry.kind === "raf") {
+      entry.cb(op.actualTime);
+    } else if (entry.kind === "idle") {
+      const deadline = { didTimeout: false, timeRemaining: () => 50 };
+      entry.cb(deadline);
+    } else {
+      entry.cb();
+    }
   }
 
   function applyOp(op: Op): void {
     switch (op.type) {
       case "event": applyEvent(op); break;
-      case "timer": break; // let native timers fire
+      case "timer": applyTimer(op); break;
       case "network": applyNetwork(op); break;
       case "random": applyRandom(op); break;
       case "clock": applyClock(op); break;
@@ -334,20 +430,33 @@ export function createPlayer(options: PlayerOptions = {}): Player {
       if (delay <= 0) {
         applyOp(op);
       } else {
-        const timer = setTimeout(() => applyOp(op), delay);
+        // Use origSetTimeout so strict-mode timer gating doesn't
+        // swallow the player's own scheduling.
+        const timer = origSetTimeout.call(globalThis, () => applyOp(op), delay) as ReturnType<typeof setTimeout>;
         pendingTimers.push(timer);
       }
     }
   }
 
   function destroy(): void {
-    for (const t of pendingTimers) clearTimeout(t);
+    for (const t of pendingTimers) origClearTimeout.call(globalThis, t);
     pendingTimers.length = 0;
     if (!installed) return;
     installed = false;
     Math.random = origRandom;
     Date.now = origDateNow;
     globalThis.fetch = origFetch;
+    if (strict && enableTimers) {
+      globalThis.setTimeout = origSetTimeout;
+      globalThis.setInterval = origSetInterval;
+      globalThis.clearTimeout = origClearTimeout;
+      globalThis.clearInterval = origClearInterval;
+      if (origRAF) (globalThis as any).requestAnimationFrame = origRAF;
+      if (origCAF) (globalThis as any).cancelAnimationFrame = origCAF;
+      if (origRIC) (globalThis as any).requestIdleCallback = origRIC;
+      if (origCIC) (globalThis as any).cancelIdleCallback = origCIC;
+      strictTimers.clear();
+    }
     randomQueue.length = 0;
     clockQueue.length = 0;
     // Reject any still-pending async-oracle waiters so their promises

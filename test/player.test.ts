@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { createPlayer } from "../src/player.js";
-import type { RandomOp, ClockOp, StorageOp, NetworkOp } from "../src/ops.js";
+import type { RandomOp, ClockOp, StorageOp, NetworkOp, TimerOp } from "../src/ops.js";
 
 describe("player", () => {
   afterEach(() => {
@@ -226,5 +226,113 @@ describe("player", () => {
 
     expect(Math.random).toBe(origRandom);
     expect(Date.now).toBe(origDateNow);
+  });
+
+  describe("strict timers (0.5.1)", () => {
+    it("setTimeout does not fire natively; fires on matching TimerOp", async () => {
+      // Capture the native setTimeout BEFORE the player patches it,
+      // so we can schedule our own wait independent of the gate.
+      const nativeSetTimeout = globalThis.setTimeout;
+
+      const player = createPlayer({
+        mode: "instant", strict: true,
+        events: false, network: false, random: false, clock: false, storage: false,
+      });
+      player.apply([]); // force install
+
+      let fired = false;
+      const id = setTimeout(() => { fired = true; }, 100);
+      expect(typeof id).toBe("number");
+
+      // Wait past the scheduled delay using native; no fire.
+      await new Promise<void>((r) => nativeSetTimeout(r, 30));
+      expect(fired).toBe(false);
+
+      const op: TimerOp = { type: "timer", kind: "timeout", seq: id as unknown as number, scheduledDelay: 100, actualTime: 0 };
+      player.apply([op]);
+      expect(fired).toBe(true);
+
+      player.destroy();
+    });
+
+    it("clearTimeout swallows the matching op", () => {
+      const player = createPlayer({
+        mode: "instant", strict: true,
+        events: false, network: false, random: false, clock: false, storage: false,
+      });
+      player.apply([]);
+
+      let fired = false;
+      const id = setTimeout(() => { fired = true; }, 100);
+      clearTimeout(id);
+
+      const op: TimerOp = { type: "timer", kind: "timeout", seq: id as unknown as number, scheduledDelay: 100, actualTime: 0 };
+      player.apply([op]);
+      expect(fired).toBe(false);
+
+      player.destroy();
+    });
+
+    it("setInterval fires once per op, not natively", () => {
+      const player = createPlayer({
+        mode: "instant", strict: true,
+        events: false, network: false, random: false, clock: false, storage: false,
+      });
+      player.apply([]);
+
+      let count = 0;
+      const id = setInterval(() => { count++; }, 10);
+
+      const op: TimerOp = { type: "timer", kind: "interval", seq: id as unknown as number, scheduledDelay: 10, actualTime: 0 };
+      player.apply([op]);
+      player.apply([op]);
+      player.apply([op]);
+      expect(count).toBe(3);
+
+      clearInterval(id);
+      player.apply([op]);
+      expect(count).toBe(3);
+
+      player.destroy();
+    });
+
+    it("non-strict: timer ops are no-ops; native timers fire", async () => {
+      const player = createPlayer({
+        mode: "instant",
+        events: false, network: false, random: false, clock: false, storage: false,
+      });
+      player.apply([]);
+
+      let fired = false;
+      setTimeout(() => { fired = true; }, 5);
+      await new Promise<void>((r) => setTimeout(r, 30));
+      expect(fired).toBe(true);
+
+      // Timer op is a no-op in non-strict mode.
+      const op: TimerOp = { type: "timer", kind: "timeout", seq: 99999, scheduledDelay: 0, actualTime: 0 };
+      player.apply([op]);
+
+      player.destroy();
+    });
+
+    it("destroy restores setTimeout/setInterval/clearTimeout/clearInterval", () => {
+      const origST = globalThis.setTimeout;
+      const origSI = globalThis.setInterval;
+      const origCT = globalThis.clearTimeout;
+      const origCI = globalThis.clearInterval;
+
+      const player = createPlayer({
+        mode: "instant", strict: true,
+        events: false, network: false, random: false, clock: false, storage: false,
+      });
+      player.apply([]);
+      expect(globalThis.setTimeout).not.toBe(origST);
+
+      player.destroy();
+      expect(globalThis.setTimeout).toBe(origST);
+      expect(globalThis.setInterval).toBe(origSI);
+      expect(globalThis.clearTimeout).toBe(origCT);
+      expect(globalThis.clearInterval).toBe(origCI);
+    });
   });
 });
