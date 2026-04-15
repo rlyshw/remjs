@@ -1,20 +1,17 @@
 /**
- * remjs v0.3 — Codec
+ * Codec — encode/decode ops for transport.
  *
- * Ops are plain JSON — no special encoding needed. The codec is a thin
- * abstraction so transport layers can swap in msgpack or protobuf later.
+ * `jsonCodec` is the default. The `Codec` interface lets transports
+ * swap in binary encodings (msgpack, protobuf) without changing callers.
  */
 
 import type { Op } from "./ops.js";
 
 /**
- * A minimal batch envelope for multi-writer topologies. Reference
- * shape only — consumers who need more (sequence numbers, signatures,
- * timestamps) wrap further; consumers who don't need this use the
- * plain `encodeBatch` path.
+ * Minimal batch envelope for multi-writer topologies. Consumers who
+ * need more (sequence numbers, signatures) wrap further.
  */
 export interface BatchMeta {
-  /** Peer that produced this batch. */
   from: string;
   ops: Op[];
 }

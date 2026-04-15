@@ -1,8 +1,5 @@
 /**
  * Clock patch — intercepts Date.now() and performance.now().
- *
- * Records the actual value returned so replicas produce identical
- * timestamps without needing synchronized clocks.
  */
 
 import type { ClockOp } from "../ops.js";

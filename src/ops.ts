@@ -1,19 +1,9 @@
 /**
- * remjs v0.3 — Event Loop Op Protocol
+ * Op types — one per event loop input kind.
  *
- * Each op captures one event loop input: something that entered the JS
- * runtime from the environment. The complete input surface is covered:
- * DOM events, timer fires, network responses, non-deterministic values
- * (random, clock), storage access, and navigation.
- *
- * All ops are plain JSON — no tagged values, no __remjs encoding.
- * The event loop input surface is made of primitives, strings, and
- * simple structures that survive JSON round-trip without special handling.
- *
- * Every op carries an optional `ts` field — the wall clock time
- * (performance.now or Date.now) when the op was recorded. This enables
- * temporal replay: ops are replayed at their original cadence rather
- * than all at once.
+ * Every op carries an optional `ts` (performance.now at record time)
+ * that the player uses for temporal replay: scheduling replayed triggers
+ * at their original relative cadence instead of all at once.
  */
 
 /* ── DOM Events ─────────────────────────────────────────────────── */

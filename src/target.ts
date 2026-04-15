@@ -42,10 +42,3 @@ export function getTargetPath(element: Element): string {
   return parts.join(" > ");
 }
 
-export function resolveTargetPath(path: string): Element | null {
-  try {
-    return document.querySelector(path);
-  } catch {
-    return null;
-  }
-}

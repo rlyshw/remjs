@@ -1,8 +1,5 @@
 /**
  * Event patch — intercepts addEventListener to record DOM events.
- *
- * When a registered event handler fires, records an EventOp with
- * the target's CSS selector path and event-specific details.
  */
 
 import type { EventOp } from "../ops.js";
@@ -11,7 +8,6 @@ import { isSynthActive } from "../synth-flag.js";
 
 export type Emit = (op: EventOp) => void;
 
-/** Extract serializable details from a DOM event. */
 function extractDetail(event: Event): Record<string, unknown> {
   const detail: Record<string, unknown> = {};
 
@@ -42,7 +38,6 @@ function extractDetail(event: Event): Record<string, unknown> {
     detail.inputType = event.inputType;
   }
 
-  // Capture input/textarea/select value for input/change events
   if (
     (event.type === "input" || event.type === "change") &&
     event.target &&
@@ -167,8 +162,7 @@ export function installEventPatch(emit: Emit): () => void {
   const origAddEventListener = EventTarget.prototype.addEventListener;
   const origRemoveEventListener = EventTarget.prototype.removeEventListener;
 
-  // Track wrapped handlers so removeEventListener works correctly
-  const wrapperMap = new WeakMap<Function, Function>();
+  const wrapperMap = new WeakMap<EventListener, EventListener>();
 
   // Dispatch depth: when a handler synchronously triggers a cascading
   // event (e.g. label click → synthesized input click → change), the

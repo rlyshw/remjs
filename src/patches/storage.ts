@@ -1,8 +1,5 @@
 /**
  * Storage patch — intercepts localStorage and sessionStorage.
- *
- * Records get/set/remove operations so replicas have identical
- * storage state without needing shared persistence.
  */
 
 import type { StorageOp } from "../ops.js";

@@ -1,16 +1,11 @@
 /**
- * Synth-flag — a module-scoped counter that marks when the player is
- * synchronously dispatching a synthetic event. Both the recorder's
- * event-capture wrapper and the player's strict-events filter read
- * this flag to distinguish player-originated dispatches from
- * environmental input.
+ * Synth-flag — marks when the player is synchronously dispatching a
+ * synthetic event. The recorder skips emit and the strict-events filter
+ * passes trusted events through while this flag is active.
  *
- * The counter form (rather than a boolean) preserves correctness
- * under reentrant dispatch: if a handler invoked by `applyEvent`
- * itself calls back into `player.apply`, `enter`/`exit` bracketing
- * keeps the active state accurate.
- *
- * See `docs/MULTIWRITER_MODEL.md` for the invariant this supports.
+ * Counter rather than boolean: reentrant dispatch (a handler that calls
+ * back into player.apply) keeps the active state accurate via
+ * enter/exit bracketing.
  */
 
 let depth = 0;

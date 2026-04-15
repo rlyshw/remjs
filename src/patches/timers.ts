@@ -1,22 +1,21 @@
 /**
- * Timer patch — intercepts setTimeout, setInterval, rAF, rIC (and
- * their clear/cancel variants).
+ * Timer patch — intercepts setTimeout, setInterval, rAF, rIC.
  *
  * Assigns monotonic sequence numbers so leader and follower can match
- * timer registrations without sharing raw browser timer IDs.
- * Records a TimerOp when the callback actually fires.
- *
- * rAF and rIC are browser-only; the patch skips them in environments
- * where they're undefined (Node tests).
+ * timer callbacks without sharing raw browser timer IDs (which differ
+ * across runtimes). Records a TimerOp when the callback fires.
  */
 
 import type { TimerOp } from "../ops.js";
 
 export type Emit = (op: TimerOp) => void;
 
+/** Union of all callback shapes that can be stored in the timer map. */
+type TimerCallback = ((...args: unknown[]) => void) | FrameRequestCallback | IdleRequestCallback;
+
 export interface TimerPatchState {
-  seqMap: Map<number, number>;       // rawId → seq
-  callbackMap: Map<number, Function>; // seq → original callback
+  seqMap: Map<number, number>;               // rawId → seq
+  callbackMap: Map<number, TimerCallback>;   // seq → original callback
   nextSeq: number;
 }
 
@@ -36,13 +35,27 @@ export function installTimerPatch(emit: Emit): { uninstall: () => void; state: T
     nextSeq: 0,
   };
 
-  globalThis.setTimeout = function (callback: Function | string, delay?: number, ...args: unknown[]): number {
+  function clearEntry(rawId: number, seq: number): void {
+    patchState.seqMap.delete(rawId);
+    patchState.callbackMap.delete(seq);
+  }
+
+  function makeClearFn(orig: (id?: number) => void): (id?: number) => void {
+    return function (id?: number): void {
+      if (id !== undefined) {
+        const seq = patchState.seqMap.get(id);
+        if (seq !== undefined) clearEntry(id, seq);
+      }
+      orig.call(globalThis, id);
+    };
+  }
+
+  globalThis.setTimeout = function (callback: TimerHandler, delay?: number, ...args: unknown[]): number {
     const seq = patchState.nextSeq++;
-    const fn = typeof callback === "string" ? () => eval(callback) : callback;
+    const fn: TimerCallback = typeof callback === "string" ? () => eval(callback) : (callback as TimerCallback);
 
     const rawId = origSetTimeout.call(globalThis, (...cbArgs: unknown[]) => {
-      patchState.seqMap.delete(rawId);
-      patchState.callbackMap.delete(seq);
+      clearEntry(rawId, seq);
       emit({
         type: "timer",
         kind: "timeout",
@@ -50,7 +63,7 @@ export function installTimerPatch(emit: Emit): { uninstall: () => void; state: T
         scheduledDelay: delay ?? 0,
         actualTime: Date.now(),
       });
-      fn(...cbArgs);
+      (fn as (...cbArgs: unknown[]) => void)(...cbArgs);
     }, delay, ...args) as unknown as number;
 
     patchState.seqMap.set(rawId, seq);
@@ -58,9 +71,9 @@ export function installTimerPatch(emit: Emit): { uninstall: () => void; state: T
     return rawId;
   } as typeof globalThis.setTimeout;
 
-  globalThis.setInterval = function (callback: Function | string, delay?: number, ...args: unknown[]): number {
+  globalThis.setInterval = function (callback: TimerHandler, delay?: number, ...args: unknown[]): number {
     const seq = patchState.nextSeq++;
-    const fn = typeof callback === "string" ? () => eval(callback) : callback;
+    const fn: TimerCallback = typeof callback === "string" ? () => eval(callback) : (callback as TimerCallback);
 
     const rawId = origSetInterval.call(globalThis, (...cbArgs: unknown[]) => {
       emit({
@@ -70,7 +83,7 @@ export function installTimerPatch(emit: Emit): { uninstall: () => void; state: T
         scheduledDelay: delay ?? 0,
         actualTime: Date.now(),
       });
-      fn(...cbArgs);
+      (fn as (...cbArgs: unknown[]) => void)(...cbArgs);
     }, delay, ...args) as unknown as number;
 
     patchState.seqMap.set(rawId, seq);
@@ -78,34 +91,14 @@ export function installTimerPatch(emit: Emit): { uninstall: () => void; state: T
     return rawId;
   } as typeof globalThis.setInterval;
 
-  globalThis.clearTimeout = function (id?: number): void {
-    if (id !== undefined) {
-      const seq = patchState.seqMap.get(id);
-      if (seq !== undefined) {
-        patchState.seqMap.delete(id);
-        patchState.callbackMap.delete(seq);
-      }
-    }
-    origClearTimeout.call(globalThis, id);
-  } as typeof globalThis.clearTimeout;
-
-  globalThis.clearInterval = function (id?: number): void {
-    if (id !== undefined) {
-      const seq = patchState.seqMap.get(id);
-      if (seq !== undefined) {
-        patchState.seqMap.delete(id);
-        patchState.callbackMap.delete(seq);
-      }
-    }
-    origClearInterval.call(globalThis, id);
-  } as typeof globalThis.clearInterval;
+  globalThis.clearTimeout = makeClearFn(origClearTimeout) as typeof globalThis.clearTimeout;
+  globalThis.clearInterval = makeClearFn(origClearInterval) as typeof globalThis.clearInterval;
 
   if (origRAF) {
     (globalThis as any).requestAnimationFrame = function (callback: FrameRequestCallback): number {
       const seq = patchState.nextSeq++;
       const rawId = origRAF.call(globalThis, (ts: number) => {
-        patchState.seqMap.delete(rawId);
-        patchState.callbackMap.delete(seq);
+        clearEntry(rawId, seq);
         emit({
           type: "timer",
           kind: "raf",
@@ -122,10 +115,7 @@ export function installTimerPatch(emit: Emit): { uninstall: () => void; state: T
 
     (globalThis as any).cancelAnimationFrame = function (id: number): void {
       const seq = patchState.seqMap.get(id);
-      if (seq !== undefined) {
-        patchState.seqMap.delete(id);
-        patchState.callbackMap.delete(seq);
-      }
+      if (seq !== undefined) clearEntry(id, seq);
       origCAF!.call(globalThis, id);
     };
   }
@@ -134,8 +124,7 @@ export function installTimerPatch(emit: Emit): { uninstall: () => void; state: T
     (globalThis as any).requestIdleCallback = function (callback: IdleRequestCallback, opts?: IdleRequestOptions): number {
       const seq = patchState.nextSeq++;
       const rawId = origRIC.call(globalThis, (deadline: IdleDeadline) => {
-        patchState.seqMap.delete(rawId);
-        patchState.callbackMap.delete(seq);
+        clearEntry(rawId, seq);
         emit({
           type: "timer",
           kind: "idle",
@@ -152,10 +141,7 @@ export function installTimerPatch(emit: Emit): { uninstall: () => void; state: T
 
     (globalThis as any).cancelIdleCallback = function (id: number): void {
       const seq = patchState.seqMap.get(id);
-      if (seq !== undefined) {
-        patchState.seqMap.delete(id);
-        patchState.callbackMap.delete(seq);
-      }
+      if (seq !== undefined) clearEntry(id, seq);
       origCIC!.call(globalThis, id);
     };
   }

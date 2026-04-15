@@ -1,9 +1,8 @@
 /**
  * Network patch — intercepts fetch().
  *
- * Assigns monotonic sequence numbers to each request. Records the
- * response (status, content-type header, text body) when it resolves.
- * XMLHttpRequest interception deferred to a future patch.
+ * Assigns monotonic sequence numbers so leader and follower can match
+ * responses. Records status, content-type, and text body on resolve.
  */
 
 import type { NetworkOp } from "../ops.js";

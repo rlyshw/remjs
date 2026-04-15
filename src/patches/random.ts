@@ -1,8 +1,5 @@
 /**
  * Random patch — intercepts Math.random() and crypto.getRandomValues().
- *
- * Records the actual values returned so replicas produce identical
- * "random" sequences.
  */
 
 import type { RandomOp } from "../ops.js";

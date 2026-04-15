@@ -1,15 +1,8 @@
 /**
  * Player — replays event loop ops on a follower runtime.
  *
- * Two replay modes:
- *   - "temporal" (default): ops are replayed at their original cadence
- *     using the `ts` field on each op. Preserves the timing of the
- *     original execution.
- *   - "instant": ops are applied immediately. Useful for fast-forward
- *     or catching up a late joiner.
- *
- * Monkey-patches globals on the follower so that Math.random(),
- * Date.now(), fetch(), etc. return recorded values.
+ * Monkey-patches globals so Math.random(), Date.now(), fetch(), etc.
+ * return recorded values instead of producing new non-determinism.
  */
 
 import type { Op, EventOp, TimerOp, NetworkOp, RandomOp, ClockOp, StorageOp, SnapshotOp } from "./ops.js";
@@ -45,12 +38,9 @@ export interface PlayerOptions {
    * Strict mode gates every event-loop entry on the follower. Enabled
    * subsystems stop falling through to native — timers only fire on
    * matching TimerOps, fetch/oracle reads must be satisfied by ops.
-   * Default false (0.4.x injection semantics). See epic #22.
-   *
-   * 0.5.1: strict timers. 0.5.2: strict events — native DOM events
-   * filtered unless dispatching from the player. 0.5.3: strict oracles
-   * — Math.random, Date.now, localStorage.getItem throw on empty queue
-   * instead of falling through to native.
+   * Without strict, native timers, events, and oracle fallback continue
+   * underneath the player, which is correct only for injection scenarios
+   * that don't need full isolation.
    */
   strict?: boolean;
   events?: boolean;
@@ -76,11 +66,6 @@ export interface ResumeOptions {
    * stays behind leader by the pause duration.
    */
   mode?: ReplayMode;
-  /**
-   * Reserved for future use — in temporal mode, coalesce consecutive
-   * ops with the same (seq, kind) into one fire-count op before
-   * draining. Not implemented in 0.5.4; accepted but ignored.
-   */
   coalesce?: boolean;
 }
 
@@ -149,12 +134,10 @@ export function createPlayer(options: PlayerOptions = {}): Player {
     return `${kind}\u0000${key}`;
   }
 
-  // Generic async-oracle protocol. An async oracle (fetch, XHR,
-  // WebSocket, future framework-specific sources) is a pair of ops:
-  // a call on the follower that wants the leader's recorded value,
-  // and an op-apply that delivers that value. Either can arrive
-  // first. The protocol parks whichever comes first and resolves
-  // on arrival of the other.
+  // Generic async-oracle protocol: a call on the follower that wants
+  // the leader's recorded value, and an op-apply that delivers it.
+  // Either can arrive first — the protocol parks whichever comes first
+  // and resolves on arrival of the other.
   type Pending = { resolve: (v: unknown) => void; reject: (e: unknown) => void };
   const pendingByKey: Map<string, Pending[]> = new Map();
   const queuedByKey: Map<string, unknown[]> = new Map();
@@ -165,14 +148,12 @@ export function createPlayer(options: PlayerOptions = {}): Player {
 
   function awaitAsyncOracle(kind: string, id: string): Promise<unknown> {
     const key = asyncKey(kind, id);
-    // Op already queued? Resolve immediately.
     const queued = queuedByKey.get(key);
     if (queued && queued.length > 0) {
       const value = queued.shift()!;
       if (queued.length === 0) queuedByKey.delete(key);
       return Promise.resolve(value);
     }
-    // Not yet — park.
     return new Promise<unknown>((resolve, reject) => {
       const arr = pendingByKey.get(key) ?? [];
       arr.push({ resolve, reject });
@@ -182,7 +163,6 @@ export function createPlayer(options: PlayerOptions = {}): Player {
 
   function signalAsyncOracle(kind: string, id: string, value: unknown): void {
     const key = asyncKey(kind, id);
-    // Pending waiter? Resolve the oldest.
     const pending = pendingByKey.get(key);
     if (pending && pending.length > 0) {
       const p = pending.shift()!;
@@ -190,7 +170,6 @@ export function createPlayer(options: PlayerOptions = {}): Player {
       p.resolve(value);
       return;
     }
-    // No waiter — queue for a future await.
     const arr = queuedByKey.get(key) ?? [];
     arr.push(value);
     queuedByKey.set(key, arr);
@@ -210,7 +189,6 @@ export function createPlayer(options: PlayerOptions = {}): Player {
   // Temporal replay state — tracks setTimeout handles so destroy() can cancel.
   const pendingTimers: ReturnType<typeof setTimeout>[] = [];
 
-  // Save originals for cleanup
   const origRandom = Math.random;
   const origDateNow = Date.now;
   const origFetch = globalThis.fetch;
@@ -233,14 +211,15 @@ export function createPlayer(options: PlayerOptions = {}): Player {
   // recorder's assignment order on the leader) and wait for the
   // matching TimerOp to arrive. clearTimeout removes the entry so
   // stragglers no-op.
-  interface StrictTimer { kind: "timeout" | "interval" | "raf" | "idle"; cb: Function }
+  /** Union of all timer callback shapes stored in the strict-timer map. */
+  type StrictTimerCallback = ((...args: unknown[]) => void) | FrameRequestCallback | IdleRequestCallback;
+  interface StrictTimer { kind: "timeout" | "interval" | "raf" | "idle"; cb: StrictTimerCallback }
   const strictTimers: Map<number, StrictTimer> = new Map();
   let strictNextSeq = 0;
 
-  // Strict-events filter uses the shared synth flag (see
-  // src/synth-flag.ts). That flag is also consulted by the recorder's
-  // capture wrapper to prevent a recorder+player co-install from
-  // feedback-looping (see docs/MULTIWRITER_MODEL.md).
+  // Strict-events filter uses the shared synth flag (synth-flag.ts),
+  // which the recorder also checks to suppress emit during player
+  // dispatch — preventing feedback on co-installed recorder+player.
   const origAddEventListener = typeof EventTarget !== "undefined" ? EventTarget.prototype.addEventListener : null;
   const origRemoveEventListener = typeof EventTarget !== "undefined" ? EventTarget.prototype.removeEventListener : null;
   let uninstallStrictEvents: (() => void) | null = null;
@@ -285,34 +264,31 @@ export function createPlayer(options: PlayerOptions = {}): Player {
     if (strict && enableStorage) installStrictStorage();
   }
 
+  function patchStrictStorageGetItem(
+    storage: Storage,
+    kind: "local" | "session",
+    origGetItem: (key: string) => string | null,
+    assignRestore: (fn: () => void) => void,
+  ): void {
+    storage.getItem = function (key: string): string | null {
+      const k = storageKey(kind, key);
+      const queue = storageGetQueue.get(k);
+      if (queue && queue.length > 0) {
+        const value = queue.shift()!;
+        if (queue.length === 0) storageGetQueue.delete(k);
+        return value;
+      }
+      throw new RemjsStrictEmptyQueueError(`${kind === "local" ? "localStorage" : "sessionStorage"}.getItem`, key);
+    };
+    assignRestore(() => { storage.getItem = origGetItem; });
+  }
+
   function installStrictStorage(): void {
     if (typeof localStorage !== "undefined" && origLocalGetItem) {
-      const patched = function (key: string): string | null {
-        const k = storageKey("local", key);
-        const queue = storageGetQueue.get(k);
-        if (queue && queue.length > 0) {
-          const value = queue.shift()!;
-          if (queue.length === 0) storageGetQueue.delete(k);
-          return value;
-        }
-        throw new RemjsStrictEmptyQueueError("localStorage.getItem", key);
-      };
-      localStorage.getItem = patched;
-      restoreLocalGetItem = () => { localStorage.getItem = origLocalGetItem; };
+      patchStrictStorageGetItem(localStorage, "local", origLocalGetItem, (fn) => { restoreLocalGetItem = fn; });
     }
     if (typeof sessionStorage !== "undefined" && origSessionGetItem) {
-      const patched = function (key: string): string | null {
-        const k = storageKey("session", key);
-        const queue = storageGetQueue.get(k);
-        if (queue && queue.length > 0) {
-          const value = queue.shift()!;
-          if (queue.length === 0) storageGetQueue.delete(k);
-          return value;
-        }
-        throw new RemjsStrictEmptyQueueError("sessionStorage.getItem", key);
-      };
-      sessionStorage.getItem = patched;
-      restoreSessionGetItem = () => { sessionStorage.getItem = origSessionGetItem; };
+      patchStrictStorageGetItem(sessionStorage, "session", origSessionGetItem, (fn) => { restoreSessionGetItem = fn; });
     }
   }
 
@@ -323,7 +299,7 @@ export function createPlayer(options: PlayerOptions = {}): Player {
 
     // Orig-handler → wrapper map so removeEventListener finds the right
     // wrapper. Listener identity is preserved from the caller's view.
-    const wrapperMap = new WeakMap<Function, EventListener>();
+    const wrapperMap = new WeakMap<EventListener, EventListener>();
 
     EventTarget.prototype.addEventListener = function (
       type: string,
@@ -369,19 +345,17 @@ export function createPlayer(options: PlayerOptions = {}): Player {
   }
 
   function installStrictTimers(): void {
-    globalThis.setTimeout = function (cb: Function | string, _delay?: number, ..._args: unknown[]): number {
-      const seq = strictNextSeq++;
-      const fn = typeof cb === "string" ? () => eval(cb as string) : cb;
-      strictTimers.set(seq, { kind: "timeout", cb: fn });
-      return seq as unknown as number;
-    } as typeof globalThis.setTimeout;
+    function makeStrictScheduler(kind: "timeout" | "interval"): (cb: TimerHandler, _delay?: number, ..._args: unknown[]) => number {
+      return function (cb, _delay?, ..._args) {
+        const seq = strictNextSeq++;
+        const fn: StrictTimerCallback = typeof cb === "string" ? () => eval(cb as string) : (cb as StrictTimerCallback);
+        strictTimers.set(seq, { kind, cb: fn });
+        return seq as unknown as number;
+      };
+    }
 
-    globalThis.setInterval = function (cb: Function | string, _delay?: number, ..._args: unknown[]): number {
-      const seq = strictNextSeq++;
-      const fn = typeof cb === "string" ? () => eval(cb as string) : cb;
-      strictTimers.set(seq, { kind: "interval", cb: fn });
-      return seq as unknown as number;
-    } as typeof globalThis.setInterval;
+    globalThis.setTimeout = makeStrictScheduler("timeout") as typeof globalThis.setTimeout;
+    globalThis.setInterval = makeStrictScheduler("interval") as typeof globalThis.setInterval;
 
     globalThis.clearTimeout = function (id?: number): void {
       if (id !== undefined) strictTimers.delete(id);
@@ -424,12 +398,12 @@ export function createPlayer(options: PlayerOptions = {}): Player {
     // minimal deadline for idle. Timeout/interval callbacks ignore
     // their argument.
     if (entry.kind === "raf") {
-      entry.cb(op.actualTime);
+      (entry.cb as FrameRequestCallback)(op.actualTime);
     } else if (entry.kind === "idle") {
-      const deadline = { didTimeout: false, timeRemaining: () => 50 };
-      entry.cb(deadline);
+      const deadline: IdleDeadline = { didTimeout: false, timeRemaining: () => 50 };
+      (entry.cb as IdleRequestCallback)(deadline);
     } else {
-      entry.cb();
+      (entry.cb as (...args: unknown[]) => void)();
     }
   }
 
@@ -574,14 +548,11 @@ export function createPlayer(options: PlayerOptions = {}): Player {
     document.documentElement.innerHTML = op.html;
   }
 
-  /**
-   * The replication invariant: every oracle value a handler reads must
-   * be available on the follower before the trigger that runs the
-   * handler. The recorder emits in observation order (trigger first,
-   * oracles second); we reorder on apply so oracles land before the
-   * trigger that consumes them. See epic #19 for why this only covers
-   * the sync-handler case.
-   */
+  // Replication invariant: every oracle value a handler reads must be
+  // available before the trigger that runs the handler. The recorder
+  // emits in observation order (trigger first, oracle second); we
+  // reorder on apply so oracles land first. This covers sync handlers
+  // only — async handlers receive values via the async-oracle protocol.
   function isOracle(op: Op): boolean {
     switch (op.type) {
       case "random":
@@ -622,7 +593,6 @@ export function createPlayer(options: PlayerOptions = {}): Player {
   }
 
   function drainBatchesTemporal(batches: Op[][]): void {
-    // Cancel any prior temporal drain in progress.
     if (temporalDrainTimer) {
       origClearTimeout.call(globalThis, temporalDrainTimer);
       temporalDrainTimer = null;
@@ -721,10 +691,9 @@ export function createPlayer(options: PlayerOptions = {}): Player {
 
     const { oracles, triggers } = partitionOps(ops);
 
-    // Oracles populate the follower's queues. They're not user-visible,
-    // so we apply them synchronously regardless of mode — their ts is
-    // only used to order them among themselves (already preserved by
-    // partition's stable order).
+    // Oracles populate queues synchronously regardless of mode.
+    // Their ts is irrelevant — order among oracles is preserved by
+    // partition's stable sort, and they must precede their triggers.
     for (const op of oracles) applyOp(op);
 
     if (mode === "instant") {
