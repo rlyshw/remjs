@@ -1,6 +1,6 @@
 # remjs
 
-**v0.5.5** · [changelog](./CHANGELOG.md) · [live demo](https://rlyshw.github.io/remjs/mirror.html)
+**v0.5.6** · [changelog](./CHANGELOG.md) · [live demo](https://rlyshw.github.io/remjs/mirror.html)
 
 Event loop replication for JavaScript.
 
@@ -75,6 +75,7 @@ leader's execution as ops arrive.
 - [`docs/USAGE.md`](./docs/USAGE.md) — full API, transport recipes, late-joiner patterns, gotchas.
 - [`docs/WIRE_FORMAT.md`](./docs/WIRE_FORMAT.md) — op envelope, the eight op types, ordering rules.
 - [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) — internals, determinism details, non-goals.
+- [`docs/TOPOLOGY.md`](./docs/TOPOLOGY.md) — single-leader, mesh P2P, server-auth, spectator patterns; echo filtering, strict-mode interactions, consensus pointers.
 - [`CHANGELOG.md`](./CHANGELOG.md) — release notes.
 
 ## License

@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.5.6 — topology docs (epic #22, milestone 6)
+
+Closes the strict-mode epic. Docs-only release: adds
+`docs/TOPOLOGY.md`, a descriptive tour of the shapes remjs supports
+— single-leader broadcast, mesh P2P, server-authoritative,
+pure spectator. Covers echo filtering, the strict-mode / emitting-peer
+tension, snapshot/late-joiner strategies, and pointers to external
+consensus libraries.
+
+Epic #22 is complete. The strict-mode tier (0.5.1–0.5.3) gives a
+provable-freeze follower; pause/step (0.5.4) builds on it;
+multi-writer (0.5.5) opens the protocol to mesh P2P;
+topology docs (this release) explain how to compose the pieces.
+
+### Added
+
+- `docs/TOPOLOGY.md` — topology patterns, echo filtering, strict/
+  emit tension, consensus pointers.
+- README link to the new doc.
+
 ## 0.5.5 — multi-writer support (epic #22, milestone 5)
 
 Fifth slice of the strict-mode epic. Enables mesh P2P and any other
