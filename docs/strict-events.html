@@ -170,7 +170,43 @@ const jsonCodec = {
     decodeBatch(data) {
         return JSON.parse(data);
     },
+    encodeBatchWithMeta(meta) {
+        return JSON.stringify(meta);
+    },
+    decodeBatchWithMeta(data) {
+        return JSON.parse(data);
+    },
 };
+
+/**
+ * Synth-flag — a module-scoped counter that marks when the player is
+ * synchronously dispatching a synthetic event. Both the recorder's
+ * event-capture wrapper and the player's strict-events filter read
+ * this flag to distinguish player-originated dispatches from
+ * environmental input.
+ *
+ * The counter form (rather than a boolean) preserves correctness
+ * under reentrant dispatch: if a handler invoked by `applyEvent`
+ * itself calls back into `player.apply`, `enter`/`exit` bracketing
+ * keeps the active state accurate.
+ *
+ * See `docs/MULTIWRITER_MODEL.md` for the invariant this supports.
+ */
+let depth = 0;
+function enterSynth() {
+    depth++;
+}
+function exitSynth() {
+    if (depth > 0)
+        depth--;
+}
+function isSynthActive() {
+    return depth > 0;
+}
+/** Test-only: reset the counter. Never call outside tests. */
+function _resetSynthFlag() {
+    depth = 0;
+}
 
 /**
  * Clock patch — intercepts Date.now() and performance.now().
@@ -531,6 +567,7 @@ function resolveTargetPath(path) {
  * the target's CSS selector path and event-specific details.
  */
 
+
 /** Extract serializable details from a DOM event. */
 function extractDetail(event) {
     const detail = {};
@@ -699,6 +736,7 @@ function installEventPatch(emit) {
         const self = this;
         const wrapper = function (event) {
             if (dispatchDepth === 0 &&
+                !isSynthActive() &&
                 event.target instanceof Element &&
                 !seenEvents.has(event)) {
                 seenEvents.add(event);
@@ -749,7 +787,7 @@ function installEventPatch(emit) {
  * delivers them via the onOps callback.
  */
 function createRecorder(options) {
-    const { onOps, batchMode = "task", events: enableEvents = true, timers: enableTimers = true, network: enableNetwork = true, random: enableRandom = true, clock: enableClock = true, storage: enableStorage = true, } = options;
+    const { onOps, batchMode = "task", peer, events: enableEvents = true, timers: enableTimers = true, network: enableNetwork = true, random: enableRandom = true, clock: enableClock = true, storage: enableStorage = true, } = options;
     let pending = [];
     let scheduled = false;
     let running = false;
@@ -791,6 +829,8 @@ function createRecorder(options) {
         if (!running)
             return;
         op.ts = getTime();
+        if (peer !== undefined)
+            op.peer = peer;
         pending.push(op);
         schedule();
     };
@@ -857,12 +897,39 @@ function createRecorder(options) {
  * Monkey-patches globals on the follower so that Math.random(),
  * Date.now(), fetch(), etc. return recorded values.
  */
+
+
+/**
+ * Thrown by strict-mode oracle reads (Math.random, Date.now,
+ * localStorage.getItem, etc.) when no matching op has been queued.
+ * Under non-strict mode the oracle falls through to native; strict
+ * mode refuses, because silent fallback is exactly the divergence
+ * channel the tier is designed to close.
+ */
+class RemjsStrictEmptyQueueError extends Error {
+    oracle;
+    key;
+    constructor(oracle, key) {
+        super(`[remjs strict] ${oracle}${key !== undefined ? "(" + JSON.stringify(key) + ")" : "()"} read with no queued value. ` +
+            `Expected a matching op before this call. Recorder must have the corresponding subsystem enabled.`);
+        this.name = "RemjsStrictEmptyQueueError";
+        this.oracle = oracle;
+        this.key = key;
+    }
+}
 function createPlayer(options = {}) {
     const { mode: defaultMode = "temporal", strict = false, events: enableEvents = true, timers: enableTimers = true, network: enableNetwork = true, random: enableRandom = true, clock: enableClock = true, storage: enableStorage = true, } = options;
     // Sync-oracle queues — populated by applying ops; drained by the
     // follower's patched accessors.
     const randomQueue = [];
     const clockQueue = [];
+    // Storage-get queue, keyed by "kind|key". FIFO per key: multiple
+    // reads of the same key on the leader replay in order on the
+    // follower.
+    const storageGetQueue = new Map();
+    function storageKey(kind, key) {
+        return `${kind}\u0000${key}`;
+    }
     const pendingByKey = new Map();
     const queuedByKey = new Map();
     function asyncKey(kind, id) {
@@ -920,20 +987,20 @@ function createPlayer(options = {}) {
     const origSetInterval = globalThis.setInterval;
     const origClearTimeout = globalThis.clearTimeout;
     const origClearInterval = globalThis.clearInterval;
+    const origLocalGetItem = typeof localStorage !== "undefined" ? localStorage.getItem.bind(localStorage) : null;
+    const origSessionGetItem = typeof sessionStorage !== "undefined" ? sessionStorage.getItem.bind(sessionStorage) : null;
+    let restoreLocalGetItem = null;
+    let restoreSessionGetItem = null;
     const origRAF = typeof requestAnimationFrame === "function" ? requestAnimationFrame : null;
     const origCAF = typeof cancelAnimationFrame === "function" ? cancelAnimationFrame : null;
     const origRIC = typeof globalThis.requestIdleCallback === "function" ? globalThis.requestIdleCallback : null;
     const origCIC = typeof globalThis.cancelIdleCallback === "function" ? globalThis.cancelIdleCallback : null;
     const strictTimers = new Map();
     let strictNextSeq = 0;
-    // Strict-events state. `strictDispatching` is true while the player is
-    // synchronously dispatching an event (and its cascade). Under strict
-    // mode, trusted events only reach user handlers inside this window —
-    // which covers player-driven dispatches and any native cascade they
-    // trigger. Native events outside the window (user clicks on follower
-    // DOM, browser-synthesized events not originating from the player)
-    // get dropped.
-    let strictDispatching = false;
+    // Strict-events filter uses the shared synth flag (see
+    // src/synth-flag.ts). That flag is also consulted by the recorder's
+    // capture wrapper to prevent a recorder+player co-install from
+    // feedback-looping (see docs/MULTIWRITER_MODEL.md).
     const origAddEventListener = typeof EventTarget !== "undefined" ? EventTarget.prototype.addEventListener : null;
     const origRemoveEventListener = typeof EventTarget !== "undefined" ? EventTarget.prototype.removeEventListener : null;
     let uninstallStrictEvents = null;
@@ -946,6 +1013,8 @@ function createPlayer(options = {}) {
             Math.random = function () {
                 if (randomQueue.length > 0)
                     return randomQueue.shift();
+                if (strict)
+                    throw new RemjsStrictEmptyQueueError("Math.random");
                 return origRandom();
             };
         }
@@ -953,6 +1022,8 @@ function createPlayer(options = {}) {
             Date.now = function () {
                 if (clockQueue.length > 0)
                     return clockQueue.shift();
+                if (strict)
+                    throw new RemjsStrictEmptyQueueError("Date.now");
                 return origDateNow.call(Date);
             };
         }
@@ -972,6 +1043,40 @@ function createPlayer(options = {}) {
             installStrictTimers();
         if (strict && enableEvents)
             installStrictEvents();
+        if (strict && enableStorage)
+            installStrictStorage();
+    }
+    function installStrictStorage() {
+        if (typeof localStorage !== "undefined" && origLocalGetItem) {
+            const patched = function (key) {
+                const k = storageKey("local", key);
+                const queue = storageGetQueue.get(k);
+                if (queue && queue.length > 0) {
+                    const value = queue.shift();
+                    if (queue.length === 0)
+                        storageGetQueue.delete(k);
+                    return value;
+                }
+                throw new RemjsStrictEmptyQueueError("localStorage.getItem", key);
+            };
+            localStorage.getItem = patched;
+            restoreLocalGetItem = () => { localStorage.getItem = origLocalGetItem; };
+        }
+        if (typeof sessionStorage !== "undefined" && origSessionGetItem) {
+            const patched = function (key) {
+                const k = storageKey("session", key);
+                const queue = storageGetQueue.get(k);
+                if (queue && queue.length > 0) {
+                    const value = queue.shift();
+                    if (queue.length === 0)
+                        storageGetQueue.delete(k);
+                    return value;
+                }
+                throw new RemjsStrictEmptyQueueError("sessionStorage.getItem", key);
+            };
+            sessionStorage.getItem = patched;
+            restoreSessionGetItem = () => { sessionStorage.getItem = origSessionGetItem; };
+        }
     }
     function installStrictEvents() {
         if (!origAddEventListener || !origRemoveEventListener)
@@ -991,7 +1096,7 @@ function createPlayer(options = {}) {
                     // Strict filter: drop trusted events that aren't inside a
                     // player-driven dispatch. Synthetic events (isTrusted=false)
                     // — including app-code dispatchEvent calls — always pass.
-                    if (event.isTrusted && !strictDispatching)
+                    if (event.isTrusted && !isSynthActive())
                         return;
                     return handler.call(this, event);
                 };
@@ -1114,16 +1219,17 @@ function createPlayer(options = {}) {
         const target = document.querySelector(op.targetPath);
         if (!target)
             return;
-        // Mark this whole dispatch (and any synchronous cascade) as player-
-        // originated so the strict-events filter lets it through. Save and
-        // restore in case of reentrant apply.
-        const prevDispatching = strictDispatching;
-        strictDispatching = true;
+        // Mark this whole dispatch (and any synchronous cascade) as
+        // player-originated. The strict-events filter lets trusted events
+        // through while this flag is active, AND the recorder's capture
+        // wrapper skips emit while it's active — preventing feedback on
+        // co-installed recorder+player runtimes.
+        enterSynth();
         try {
             dispatchEventFromOp(op, target);
         }
         finally {
-            strictDispatching = prevDispatching;
+            exitSynth();
         }
     }
     function dispatchEventFromOp(op, target) {
@@ -1215,6 +1321,15 @@ function createPlayer(options = {}) {
     function applyStorage(op) {
         if (!enableStorage)
             return;
+        if (op.action === "get") {
+            // Queue the recorded read value so the follower's patched
+            // getItem returns it. FIFO per (kind, key).
+            const k = storageKey(op.kind, op.key);
+            const q = storageGetQueue.get(k) ?? [];
+            q.push(op.value);
+            storageGetQueue.set(k, q);
+            return;
+        }
         const storage = op.kind === "local"
             ? (typeof localStorage !== "undefined" ? localStorage : null)
             : (typeof sessionStorage !== "undefined" ? sessionStorage : null);
@@ -1261,8 +1376,116 @@ function createPlayer(options = {}) {
         }
         return { oracles, triggers };
     }
+    // ── Pause / resume / step state ────────────────────────────────
+    let paused = false;
+    const pendingBatches = [];
+    let pauseOpts = {};
+    let temporalDrainTimer = null;
+    function queueSize() {
+        let n = 0;
+        for (const b of pendingBatches)
+            n += b.length;
+        return n;
+    }
+    function drainBatchesInstant(batches) {
+        for (const batch of batches)
+            applyInternal(batch, { mode: "instant" });
+    }
+    function drainBatchesTemporal(batches) {
+        // Cancel any prior temporal drain in progress.
+        if (temporalDrainTimer) {
+            origClearTimeout.call(globalThis, temporalDrainTimer);
+            temporalDrainTimer = null;
+        }
+        const firstBatchTs = minBatchTs(batches[0]);
+        const drainStart = performance.now();
+        let cursor = 0;
+        const pump = () => {
+            temporalDrainTimer = null;
+            if (cursor >= batches.length)
+                return;
+            applyInternal(batches[cursor], { mode: "instant" });
+            cursor++;
+            if (cursor >= batches.length)
+                return;
+            const nextTs = minBatchTs(batches[cursor]);
+            const targetDelta = (nextTs !== undefined && firstBatchTs !== undefined)
+                ? nextTs - firstBatchTs
+                : 0;
+            const elapsed = performance.now() - drainStart;
+            const delay = Math.max(0, targetDelta - elapsed);
+            temporalDrainTimer = origSetTimeout.call(globalThis, pump, delay);
+        };
+        pump();
+    }
+    function minBatchTs(batch) {
+        let min;
+        for (const op of batch) {
+            if (op.ts !== undefined && (min === undefined || op.ts < min))
+                min = op.ts;
+        }
+        return min;
+    }
+    function enqueueBatch(ops) {
+        pendingBatches.push([...ops]);
+        const cap = pauseOpts.maxQueue;
+        if (cap !== undefined && queueSize() > cap) {
+            const policy = pauseOpts.onQueueFull ?? "drain";
+            if (policy === "instant") {
+                paused = false;
+                const batches = pendingBatches.splice(0, pendingBatches.length);
+                pauseOpts = {};
+                drainBatchesInstant(batches);
+            }
+            else {
+                // "drain": apply oldest half, keep paused.
+                const half = Math.max(1, Math.floor(pendingBatches.length / 2));
+                const chunk = pendingBatches.splice(0, half);
+                drainBatchesInstant(chunk);
+            }
+        }
+    }
     function apply(ops, options) {
         install();
+        if (ops.length === 0)
+            return;
+        if (paused) {
+            enqueueBatch(ops);
+            return;
+        }
+        applyInternal(ops, options);
+    }
+    function pause(options) {
+        if (!strict) {
+            throw new Error("[remjs] player.pause() requires createPlayer({ strict: true }). " +
+                "Non-strict pause is not a true freeze — native timers, events, " +
+                "and oracle fallback continue underneath the player.");
+        }
+        paused = true;
+        pauseOpts = options ?? {};
+    }
+    function step() {
+        if (!paused)
+            return false;
+        const batch = pendingBatches.shift();
+        if (!batch)
+            return false;
+        applyInternal(batch, { mode: "instant" });
+        return true;
+    }
+    function resume(options) {
+        paused = false;
+        const mode = options?.mode ?? "instant";
+        const batches = pendingBatches.splice(0, pendingBatches.length);
+        pauseOpts = {};
+        if (batches.length === 0)
+            return;
+        if (mode === "temporal")
+            drainBatchesTemporal(batches);
+        else
+            drainBatchesInstant(batches);
+    }
+    function applyInternal(ops, options) {
         if (ops.length === 0)
             return;
         const mode = options?.mode ?? defaultMode;
@@ -1306,6 +1529,13 @@ function createPlayer(options = {}) {
         for (const t of pendingTimers)
             origClearTimeout.call(globalThis, t);
         pendingTimers.length = 0;
+        if (temporalDrainTimer) {
+            origClearTimeout.call(globalThis, temporalDrainTimer);
+            temporalDrainTimer = null;
+        }
+        pendingBatches.length = 0;
+        paused = false;
+        pauseOpts = {};
         if (!installed)
             return;
         installed = false;
@@ -1331,6 +1561,15 @@ function createPlayer(options = {}) {
             uninstallStrictEvents();
             uninstallStrictEvents = null;
         }
+        if (restoreLocalGetItem) {
+            restoreLocalGetItem();
+            restoreLocalGetItem = null;
+        }
+        if (restoreSessionGetItem) {
+            restoreSessionGetItem();
+            restoreSessionGetItem = null;
+        }
+        storageGetQueue.clear();
         randomQueue.length = 0;
         clockQueue.length = 0;
         // Reject any still-pending async-oracle waiters so their promises
@@ -1342,7 +1581,14 @@ function createPlayer(options = {}) {
         pendingByKey.clear();
         queuedByKey.clear();
     }
-    return { apply, destroy };
+    return {
+        apply,
+        pause,
+        step,
+        resume,
+        get paused() { return paused; },
+        destroy,
+    };
 }
 
 window.remjs = { createPlayer };

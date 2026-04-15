@@ -29,7 +29,8 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DIST = path.join(ROOT, "dist");
 
 const SOURCES = [
-  "ops.js", "codec.js", "patches/clock.js", "patches/random.js",
+  "ops.js", "codec.js", "synth-flag.js",
+  "patches/clock.js", "patches/random.js",
   "patches/timers.js", "patches/network.js", "patches/storage.js",
   "target.js", "patches/events.js", "recorder.js", "player.js",
 ];
