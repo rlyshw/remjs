@@ -1602,11 +1602,15 @@ window.remjs = { createRecorder, createPlayer, jsonCodec };
   }
 
   function appendMessage(peer, text) {
-    const div = document.createElement("div");
-    div.className = "msg";
-    div.innerHTML = '<span class="who ' + peer + '">' + peer + ':</span>' +
-      document.createTextNode(text).textContent.replace(/&/g, "&amp;").replace(/</g, "&lt;");
-    messages.appendChild(div);
+    const wrap = document.createElement("div");
+    wrap.className = "msg";
+    const who = document.createElement("span");
+    who.className = "who " + peer;
+    who.textContent = peer + ":";
+    const body = document.createTextNode(" " + text);
+    wrap.appendChild(who);
+    wrap.appendChild(body);
+    messages.appendChild(wrap);
     messages.scrollTop = messages.scrollHeight;
   }
 
@@ -1618,18 +1622,45 @@ window.remjs = { createRecorder, createPlayer, jsonCodec };
     messages.scrollTop = messages.scrollHeight;
   }
 
+  // ── Reroll: register BEFORE recorder.start() so the click is a
+  // plain native listener, invisible to the recorder. If we captured
+  // reroll clicks, they'd broadcast and chain-reload all tabs.
+  rerollBtn.addEventListener("click", () => {
+    me = names[(names.indexOf(me) + 1) % names.length];
+    location.hash = me;
+    location.reload();
+  });
+
   // ── Mesh transport ──
   const ch = new BroadcastChannel("remjs-multiwriter");
 
   // ── Player: applies remote ops ──
-  const player = createPlayer();
+  // Disable subsystems we're not using — keeps the fetch patch from
+  // installing a pending-oracle on globalThis.fetch.
+  const player = createPlayer({
+    timers: false, network: false, random: false, clock: false, storage: false,
+  });
+
+  // Track "who produced the op we're currently applying" so the
+  // submit handler knows which peer to attribute the message to.
+  let currentDispatchPeer = null;
+  const origApply = player.apply.bind(player);
+  player.apply = function (ops, options) {
+    for (const op of ops) {
+      if (op.peer) { currentDispatchPeer = op.peer; break; }
+    }
+    try { return origApply(ops, options); }
+    finally { currentDispatchPeer = null; }
+  };
+
   player.apply([]); // force install
 
   ch.onmessage = (e) => {
     const { from, ops } = jsonCodec.decodeBatchWithMeta(e.data);
     if (from === me) {
-      // Echo of our own batch — the recorder already fired the handler
-      // locally. Drop to avoid double-firing.
+      // BroadcastChannel doesn't echo to the posting context, so in
+      // practice this branch never hits for same-origin same-browser.
+      // Kept for other transports that do echo.
       echoes += ops.length;
       for (const op of ops) logLine("← " + op.type + " from=" + from + " (echo, dropped)", "echo");
       refreshStats();
@@ -1654,63 +1685,33 @@ window.remjs = { createRecorder, createPlayer, jsonCodec };
     timers: false, network: false, random: false, clock: false, storage: false,
   });
 
-  // ── App logic ──
-  // The submit handler is registered BEFORE the recorder starts, so it's
-  // a plain native listener. When a remote submit op arrives, the player
-  // dispatches a synthetic submit event; the browser fires our handler;
-  // handler reads input.value (which the remote peer's input events have
-  // already populated) and appends the message.
+  recorder.start();
+
+  // ── App handlers registered AFTER recorder.start() so the wrapper
+  // records them. Until a listener is attached to a subsystem, the
+  // recorder has nothing to intercept — the browser fires events to
+  // its own internal listener list and we never see them.
+
+  // Keystrokes in the input → input events → detail.value replicates
+  // the field on the other peer's screen. The empty handler exists
+  // purely so the recorder's wrapped addEventListener has something
+  // to see.
+  input.addEventListener("input", () => {});
+
+  // Submit: handleSubmit reads input.value (which the remote peer's
+  // input events already populated via applyEvent) and appends.
   function handleSubmit(e) {
     e.preventDefault();
     const text = input.value.trim();
     if (!text) return;
-    // Determine who submitted: check the target's ownerDocument? The
-    // simpler model: whoever "owns" the submit event is whoever sent
-    // the ops. We pull the peer from the event's op metadata via a
-    // runtime trick — the last op applied carries 'peer'. But for
-    // synchronously-dispatched events we don't have that context.
-    //
-    // Cleanest approach: identify the sender through the input field's
-    // value prefix pattern, OR via a hidden data attribute we write
-    // before submit. We use the simpler approach: each peer prepends
-    // its name. But that requires coordination too.
-    //
-    // Best pragmatic answer for this demo: use a WeakMap of
-    // event→peer populated by the player. Since this is demo code,
-    // we lean on `lastAppliedPeer` variable set by the player's
-    // apply wrapper. See below.
     const who = currentDispatchPeer || me;
     appendMessage(who, text);
     input.value = "";
   }
   form.addEventListener("submit", handleSubmit);
 
-  // Track "who produced the op we're currently applying" so the
-  // submit handler knows which peer to attribute the message to.
-  let currentDispatchPeer = null;
-  const origApply = player.apply.bind(player);
-  player.apply = function (ops, options) {
-    // Find the peer from the first op that has one (all ops in a
-    // batch share peer because the recorder stamps per emit; they
-    // all come from the same producer).
-    for (const op of ops) {
-      if (op.peer) { currentDispatchPeer = op.peer; break; }
-    }
-    try { return origApply(ops, options); }
-    finally { currentDispatchPeer = null; }
-  };
-
-  recorder.start();
-
-  systemMessage("joined as " + me + " — try opening a second tab (add #alice, #bob, #carol, or #dave to the URL)");
+  systemMessage("joined as " + me + " — open a second tab with #alice, #bob, #carol, or #dave");
   refreshStats();
-
-  // ── Reroll ──
-  rerollBtn.addEventListener("click", () => {
-    me = names[(names.indexOf(me) + 1) % names.length];
-    location.hash = me;
-    location.reload();
-  });
 })();
   </script>
 </body>
