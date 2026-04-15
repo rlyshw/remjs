@@ -14,6 +14,7 @@
 
 import type { Op, EventOp, TimerOp, NetworkOp, RandomOp, ClockOp, StorageOp, SnapshotOp } from "./ops.js";
 import { installIdlHandlerShim } from "./patches/events.js";
+import { enterSynth, exitSynth, isSynthActive } from "./synth-flag.js";
 
 export type ReplayMode = "temporal" | "instant";
 
@@ -236,14 +237,10 @@ export function createPlayer(options: PlayerOptions = {}): Player {
   const strictTimers: Map<number, StrictTimer> = new Map();
   let strictNextSeq = 0;
 
-  // Strict-events state. `strictDispatching` is true while the player is
-  // synchronously dispatching an event (and its cascade). Under strict
-  // mode, trusted events only reach user handlers inside this window —
-  // which covers player-driven dispatches and any native cascade they
-  // trigger. Native events outside the window (user clicks on follower
-  // DOM, browser-synthesized events not originating from the player)
-  // get dropped.
-  let strictDispatching = false;
+  // Strict-events filter uses the shared synth flag (see
+  // src/synth-flag.ts). That flag is also consulted by the recorder's
+  // capture wrapper to prevent a recorder+player co-install from
+  // feedback-looping (see docs/MULTIWRITER_MODEL.md).
   const origAddEventListener = typeof EventTarget !== "undefined" ? EventTarget.prototype.addEventListener : null;
   const origRemoveEventListener = typeof EventTarget !== "undefined" ? EventTarget.prototype.removeEventListener : null;
   let uninstallStrictEvents: (() => void) | null = null;
@@ -341,7 +338,7 @@ export function createPlayer(options: PlayerOptions = {}): Player {
           // Strict filter: drop trusted events that aren't inside a
           // player-driven dispatch. Synthetic events (isTrusted=false)
           // — including app-code dispatchEvent calls — always pass.
-          if (event.isTrusted && !strictDispatching) return;
+          if (event.isTrusted && !isSynthActive()) return;
           return handler.call(this, event);
         };
         wrapperMap.set(handler, wrapper);
@@ -456,15 +453,16 @@ export function createPlayer(options: PlayerOptions = {}): Player {
     const target = document.querySelector(op.targetPath);
     if (!target) return;
 
-    // Mark this whole dispatch (and any synchronous cascade) as player-
-    // originated so the strict-events filter lets it through. Save and
-    // restore in case of reentrant apply.
-    const prevDispatching = strictDispatching;
-    strictDispatching = true;
+    // Mark this whole dispatch (and any synchronous cascade) as
+    // player-originated. The strict-events filter lets trusted events
+    // through while this flag is active, AND the recorder's capture
+    // wrapper skips emit while it's active — preventing feedback on
+    // co-installed recorder+player runtimes.
+    enterSynth();
     try {
       dispatchEventFromOp(op, target);
     } finally {
-      strictDispatching = prevDispatching;
+      exitSynth();
     }
   }
 

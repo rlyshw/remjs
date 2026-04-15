@@ -7,6 +7,7 @@
 
 import type { EventOp } from "../ops.js";
 import { getTargetPath } from "../target.js";
+import { isSynthActive } from "../synth-flag.js";
 
 export type Emit = (op: EventOp) => void;
 
@@ -195,6 +196,7 @@ export function installEventPatch(emit: Emit): () => void {
     const wrapper = function (this: EventTarget, event: Event) {
       if (
         dispatchDepth === 0 &&
+        !isSynthActive() &&
         event.target instanceof Element &&
         !seenEvents.has(event)
       ) {

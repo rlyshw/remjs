@@ -1,5 +1,63 @@
 # Changelog
 
+## 0.5.7 — multi-writer correctness invariant (research release)
+
+A bug surfaced by the 0.5.5 multi-writer demo: a single runtime
+running both a recorder and a player feedback-looped every applied
+op into a new emitted op. ~30k ops/second of garbage after a tab
+switch. Root cause: the recorder's event wrapper captured events
+the player synthetically dispatched while applying remote ops.
+
+This release formalizes the invariant the framework must hold to
+avoid the feedback (**"no op may be emitted as a side effect of
+another op's application"**), adds the mechanism that enforces it,
+and ships the proof model as a research note.
+
+Framed as a research release because the code change is small but
+the framing is the deliverable — future multi-writer work has a
+model to reference.
+
+### Added
+
+- **`src/synth-flag.ts`** — module-scoped counter + `enterSynth` /
+  `exitSynth` / `isSynthActive` helpers. Shared between recorder
+  and player on the same runtime.
+- **`docs/MULTIWRITER_MODEL.md`** — formal model of the multi-
+  writer protocol. Classifies events by origin (environmental,
+  app-dispatched, player-dispatched, cascade), specifies which the
+  recorder must capture, and proves (informally) that the fix
+  restores convergence. Also enumerates open problems not addressed
+  in this release (class-2 app-dispatched events, cross-peer oracle
+  attribution, strict-mode + recorder composition).
+- **`test/multiwriter-invariant.test.ts`** — four tests that
+  directly verify the invariant: recorder skips player-dispatched
+  events, recorder still captures environmental events, two-peer
+  round-trip doesn't cascade, synth flag handles reentrant
+  `apply()`.
+
+### Changed
+
+- **Player `applyEvent`** — replaces the local `strictDispatching`
+  flag with shared `enterSynth` / `exitSynth` from
+  `src/synth-flag.ts`. Semantically identical for strict-mode
+  filtering; now also visible to the recorder.
+- **Recorder event wrapper** (`src/patches/events.ts`) —
+  capture guard now checks `isSynthActive()` in addition to
+  `dispatchDepth`. Events dispatched by the player on the same
+  runtime are skipped at emit time.
+- **Multi-writer demo** (`docs/multiwriter.html`) — no demo-code
+  change needed beyond the framework fix; rebuilt against 0.5.7.
+
+### Open problems (tracked for future research)
+
+- **App-dispatched events** still captured. Mesh peers running
+  identical app code that calls `dispatchEvent` will fire the
+  event twice. Fix candidates in `MULTIWRITER_MODEL.md`.
+- **Per-subsystem strict mode** would let emitting peers use
+  strict timers + strict oracles without strict events (which
+  breaks the recorder). Would also unblock pause-for-debug on
+  emitting peers.
+
 ## 0.5.6 — topology docs (epic #22, milestone 6)
 
 Closes the strict-mode epic. Docs-only release: adds

@@ -381,7 +381,7 @@ name implies a guarantee the non-strict tier can't provide.
 Rather than ship two pause semantics (leaky and true) and explain
 the difference, the API refuses the leaky one.
 
-### Multi-writer (0.5.5)
+### Multi-writer (0.5.5, 0.5.7)
 
 Every peer runs both a recorder (for local inputs) and a player
 (for remote inputs). `RecorderOptions.peer` stamps an identifier on
@@ -389,6 +389,15 @@ every emitted op; consumers use it for echo dedup and consensus.
 `jsonCodec.encodeBatchWithMeta({ from, ops })` provides a minimal
 transport envelope for consumers who want a batch-level producer
 field in addition to the per-op one.
+
+**The feedback invariant.** Because both recorder and player wrap
+the same `addEventListener` prototype, a naive coexistence feedback-
+loops: events the player dispatches while applying remote ops fire
+the recorder's capture wrapper, which emits new ops, which broadcast
+back. 0.5.7 adds a shared `synth-flag` module — the player
+increments a counter around every dispatch; the recorder's capture
+guard skips events observed while the counter is non-zero. Formal
+model in [`MULTIWRITER_MODEL.md`](./MULTIWRITER_MODEL.md).
 
 The framework takes no position on consensus, conflict resolution,
 or topology. The peer field is transport-level metadata; the
